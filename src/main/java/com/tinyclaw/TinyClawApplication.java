@@ -12,6 +12,6 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 public class TinyClawApplication {
 
     public static void main(String[] args) {
-        SpringApplication.run(TinyClawApplication.class, args);
+        System.exit(SpringApplication.exit(SpringApplication.run(TinyClawApplication.class, args)));
     }
 }

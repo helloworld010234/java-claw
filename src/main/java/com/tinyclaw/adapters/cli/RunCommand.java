@@ -1,5 +1,6 @@
 package com.tinyclaw.adapters.cli;
 
+import org.springframework.stereotype.Component;
 import picocli.CommandLine;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
@@ -14,6 +15,7 @@ import java.util.UUID;
  *
  * <p>Milestone 1 最小行为：校验参数、解析 workspace、打印任务信息并退出。</p>
  */
+@Component
 @Command(
     name = "run",
     description = "Run a single agent task with the given prompt and workspace",
