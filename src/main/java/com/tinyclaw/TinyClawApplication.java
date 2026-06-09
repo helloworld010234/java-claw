@@ -1,5 +1,6 @@
 package com.tinyclaw;
 
+import com.tinyclaw.config.CliModeDetector;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
@@ -12,6 +13,10 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 public class TinyClawApplication {
 
     public static void main(String[] args) {
-        System.exit(SpringApplication.exit(SpringApplication.run(TinyClawApplication.class, args)));
+        if (CliModeDetector.isCliMode(args)) {
+            System.exit(SpringApplication.exit(SpringApplication.run(TinyClawApplication.class, args)));
+        } else {
+            SpringApplication.run(TinyClawApplication.class, args);
+        }
     }
 }
