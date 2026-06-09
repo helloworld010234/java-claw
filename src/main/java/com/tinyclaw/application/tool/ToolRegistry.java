@@ -7,6 +7,8 @@ import com.tinyclaw.domain.message.ToolResult;
 import com.tinyclaw.ports.tool.AgentTool;
 import com.tinyclaw.ports.tool.ToolExecutionContext;
 
+import com.tinyclaw.domain.message.ToolDefinition;
+
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -31,6 +33,15 @@ public class ToolRegistry {
 
     public Optional<AgentTool> find(String name) {
         return Optional.ofNullable(tools.get(name));
+    }
+
+    /**
+     * Returns definitions for all registered tools.
+     */
+    public List<ToolDefinition> availableTools() {
+        return tools.values().stream()
+            .map(AgentTool::definition)
+            .toList();
     }
 
     public ToolResult execute(ToolCall call, ToolExecutionContext context) {

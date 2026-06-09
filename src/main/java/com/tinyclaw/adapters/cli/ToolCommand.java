@@ -5,6 +5,7 @@ import com.tinyclaw.domain.common.DomainGuards;
 import com.tinyclaw.domain.message.ToolCall;
 import com.tinyclaw.domain.message.ToolResult;
 import com.tinyclaw.ports.tool.ToolExecutionContext;
+import org.springframework.context.annotation.Scope;
 import org.springframework.stereotype.Component;
 import picocli.CommandLine;
 import picocli.CommandLine.Command;
@@ -22,6 +23,7 @@ import java.util.concurrent.Callable;
  * <p>打通 CLI 参数 → ToolCall → ToolRegistry → AgentTool → ToolResult → CLI 输出。</p>
  */
 @Component
+@Scope("prototype")
 @Command(
     name = "tool",
     description = "Execute a registered agent tool",

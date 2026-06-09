@@ -67,4 +67,87 @@ class CliRunnerTest {
         );
         assertThat(cliRunner.getExitCode()).isZero();
     }
+
+    @Test
+    void toolWithUnknownNameShouldReturnOne(@TempDir Path tempDir) {
+        cliRunner.run(
+            "tool", "--name", "unknown", "--args", "{}",
+            "--dir", tempDir.toString(),
+            "--call-id", "call-1",
+            "--spring.profiles.active=test",
+            "--spring.main.web-application-type=none"
+        );
+        assertThat(cliRunner.getExitCode()).isEqualTo(1);
+    }
+
+    @Test
+    void runWithPlanFileSuccessShouldReturnZero(@TempDir Path tempDir) throws Exception {
+        java.nio.file.Files.writeString(tempDir.resolve("notes.txt"), "hello");
+        java.nio.file.Files.writeString(tempDir.resolve("plan.json"), """
+            {
+              "stopOnError": true,
+              "steps": [
+                {"id": "read-notes", "tool": "read_file", "args": {"path": "notes.txt"}}
+              ]
+            }
+            """);
+
+        cliRunner.run(
+            "run", "--prompt", "Read notes",
+            "--dir", tempDir.toString(),
+            "--session", "smoke-run",
+            "--plan-file", tempDir.resolve("plan.json").toString(),
+            "--spring.profiles.active=test",
+            "--spring.main.web-application-type=none"
+        );
+        assertThat(cliRunner.getExitCode()).isZero();
+    }
+
+    @Test
+    void runWithPlanFileToolFailureShouldReturnOne(@TempDir Path tempDir) throws Exception {
+        java.nio.file.Files.writeString(tempDir.resolve("fail-plan.json"), """
+            {
+              "stopOnError": true,
+              "steps": [
+                {"id": "missing-read", "tool": "read_file", "args": {"path": "missing.txt"}}
+              ]
+            }
+            """);
+
+        cliRunner.run(
+            "run", "--prompt", "Fail fast",
+            "--dir", tempDir.toString(),
+            "--session", "smoke-fail",
+            "--plan-file", tempDir.resolve("fail-plan.json").toString(),
+            "--spring.profiles.active=test",
+            "--spring.main.web-application-type=none"
+        );
+        assertThat(cliRunner.getExitCode()).isEqualTo(1);
+    }
+
+    @Test
+    void runWithPlanFileMissingShouldReturnTwo(@TempDir Path tempDir) {
+        cliRunner.run(
+            "run", "--prompt", "Hello",
+            "--dir", tempDir.toString(),
+            "--session", "smoke",
+            "--plan-file", tempDir.resolve("missing.json").toString(),
+            "--spring.profiles.active=test",
+            "--spring.main.web-application-type=none"
+        );
+        assertThat(cliRunner.getExitCode()).isEqualTo(2);
+    }
+
+    @Test
+    void runWithEngineFakeToolFailureShouldReturnOne(@TempDir Path tempDir) {
+        cliRunner.run(
+            "run", "--prompt", "read missing",
+            "--dir", tempDir.toString(),
+            "--session", "smoke-read-fail",
+            "--engine", "fake",
+            "--spring.profiles.active=test",
+            "--spring.main.web-application-type=none"
+        );
+        assertThat(cliRunner.getExitCode()).isEqualTo(1);
+    }
 }

@@ -1,27 +1,60 @@
 package com.tinyclaw.adapters.cli;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.tinyclaw.adapters.llm.fake.FakeLlmGateway;
+import com.tinyclaw.application.engine.AgentEngine;
+import com.tinyclaw.application.engine.AgentRunResult;
+import com.tinyclaw.application.run.ScriptedRunExecutor;
+import com.tinyclaw.application.run.ScriptedRunPlan;
+import com.tinyclaw.application.run.ScriptedRunResult;
+import com.tinyclaw.application.run.ScriptedRunStepResult;
+import com.tinyclaw.domain.common.DomainGuards;
+import com.tinyclaw.domain.run.AgentRun;
+import com.tinyclaw.domain.session.Session;
+import com.tinyclaw.ports.tool.ToolExecutionContext;
+import org.springframework.context.annotation.Scope;
 import org.springframework.stereotype.Component;
 import picocli.CommandLine;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Option;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.UUID;
+import java.util.concurrent.Callable;
 
 /**
  * CLI run 命令：执行单次 Agent 任务。
  *
- * <p>Milestone 1 最小行为：校验参数、解析 workspace、打印任务信息并退出。</p>
+ * <p>支持三种模式（按优先级）：</p>
+ * <ul>
+ *   <li>有 plan file：读取 JSON 计划，按顺序调用工具。</li>
+ *   <li>有 --engine fake：走 AgentEngine + FakeLlmGateway 的 ReAct 循环。</li>
+ *   <li>默认：校验参数、打印任务信息并退出（兼容旧行为）。</li>
+ * </ul>
  */
 @Component
+@Scope("prototype")
 @Command(
     name = "run",
     description = "Run a single agent task with the given prompt and workspace",
     mixinStandardHelpOptions = true
 )
-public class RunCommand implements Runnable {
+public class RunCommand implements Callable<Integer> {
+
+    private final ScriptedRunExecutor scriptedRunExecutor;
+    private final AgentEngine agentEngine;
+    private final ObjectMapper objectMapper;
+
+    public RunCommand(ScriptedRunExecutor scriptedRunExecutor,
+                      AgentEngine agentEngine,
+                      ObjectMapper objectMapper) {
+        this.scriptedRunExecutor = DomainGuards.requireNonNull(scriptedRunExecutor, "scriptedRunExecutor");
+        this.agentEngine = DomainGuards.requireNonNull(agentEngine, "agentEngine");
+        this.objectMapper = DomainGuards.requireNonNull(objectMapper, "objectMapper");
+    }
 
     @Option(
         names = {"--prompt"},
@@ -42,17 +75,97 @@ public class RunCommand implements Runnable {
     )
     private String sessionId;
 
+    @Option(
+        names = {"--plan-file"},
+        description = "Path to a JSON plan file describing tool steps to execute"
+    )
+    private String planFile;
+
+    @Option(
+        names = {"--engine"},
+        description = "Execution engine: none (default), fake"
+    )
+    private String engine;
+
     @Override
-    public void run() {
+    public Integer call() {
         String effectiveSessionId = sessionId != null && !sessionId.isBlank()
             ? sessionId
             : UUID.randomUUID().toString();
 
-        Path workspace = resolveWorkspace(dir);
+        Path workspace;
+        try {
+            workspace = resolveWorkspace(dir);
+        } catch (CommandLine.ParameterException e) {
+            System.err.println(e.getMessage());
+            return 2;
+        }
 
+        // Validate engine parameter before any routing
+        if (engine != null && !engine.isBlank()
+            && !"fake".equalsIgnoreCase(engine)
+            && !"none".equalsIgnoreCase(engine)) {
+            System.err.println("Invalid engine: " + engine);
+            return 2;
+        }
+
+        // Priority 1: plan-file mode
+        if (planFile != null && !planFile.isBlank()) {
+            return runPlanFile(effectiveSessionId, workspace);
+        }
+
+        // Priority 2: agent engine (fake) mode
+        if ("fake".equalsIgnoreCase(engine)) {
+            return runAgentEngine(effectiveSessionId, workspace);
+        }
+
+        // Priority 3: legacy print-only mode (also handles --engine none)
         System.out.println("sessionId: " + effectiveSessionId);
         System.out.println("workspace: " + workspace.toAbsolutePath());
         System.out.println("prompt: " + prompt);
+        return 0;
+    }
+
+    private Integer runPlanFile(String effectiveSessionId, Path workspace) {
+        Path planPath = Paths.get(planFile).toAbsolutePath().normalize();
+        if (!Files.exists(planPath)) {
+            System.err.println("Plan file does not exist: " + planFile);
+            return 2;
+        }
+        if (Files.isDirectory(planPath)) {
+            System.err.println("Plan file is a directory: " + planFile);
+            return 2;
+        }
+
+        ScriptedRunPlan plan;
+        try {
+            plan = objectMapper.readValue(planPath.toFile(), ScriptedRunPlan.class);
+        } catch (IOException e) {
+            System.err.println("Failed to parse plan file: " + e.getMessage());
+            return 2;
+        } catch (Exception e) {
+            System.err.println("Invalid plan: " + e.getMessage());
+            return 2;
+        }
+
+        ToolExecutionContext context = new ToolExecutionContext(workspace);
+        ScriptedRunResult result = scriptedRunExecutor.execute(plan, context);
+
+        printPlanSummary(effectiveSessionId, workspace, result);
+        return result.success() ? 0 : 1;
+    }
+
+    private Integer runAgentEngine(String effectiveSessionId, Path workspace) {
+        Session session = Session.create(effectiveSessionId, workspace.toAbsolutePath().toString(), java.time.Instant.now());
+        AgentRun run = AgentRun.start("run-" + effectiveSessionId, effectiveSessionId, 5, java.time.Instant.now());
+        ToolExecutionContext context = new ToolExecutionContext(workspace);
+
+        FakeLlmGateway fakeLlm = FakeLlmGateway.forPrompt(prompt);
+        AgentEngine fakeEngine = agentEngine.withLlmGateway(fakeLlm);
+        AgentRunResult result = fakeEngine.run(run, session, prompt, context);
+
+        printAgentSummary(effectiveSessionId, workspace, result);
+        return result.success() ? 0 : 1;
     }
 
     private Path resolveWorkspace(String dir) {
@@ -74,5 +187,33 @@ public class RunCommand implements Runnable {
             );
         }
         return path;
+    }
+
+    private void printPlanSummary(String sessionId, Path workspace, ScriptedRunResult result) {
+        System.out.println("sessionId: " + sessionId);
+        System.out.println("workspace: " + workspace.toAbsolutePath());
+        System.out.println("prompt: " + prompt);
+        System.out.println("planFile: " + planFile);
+        System.out.println("status: " + (result.success() ? "success" : "failed"));
+        System.out.println("steps:");
+        for (ScriptedRunStepResult step : result.steps()) {
+            System.out.println("- id: " + step.id());
+            System.out.println("  tool: " + step.tool());
+            System.out.println("  error: " + step.error());
+            System.out.println("  output: " + step.output());
+        }
+    }
+
+    private void printAgentSummary(String sessionId, Path workspace, AgentRunResult result) {
+        System.out.println("mode: agent");
+        System.out.println("session: " + sessionId);
+        System.out.println("workspace: " + workspace.toAbsolutePath());
+        System.out.println("prompt: " + prompt);
+        System.out.println("status: " + (result.success() ? "success" : "failed"));
+        System.out.println("turns: " + result.turnCount());
+        System.out.println("final: " + result.finalMessage());
+        if (result.errorReason() != null) {
+            System.out.println("error: " + result.errorReason());
+        }
     }
 }

@@ -1,0 +1,45 @@
+package com.tinyclaw.adapters.reporter;
+
+import com.tinyclaw.application.engine.AgentRunResult;
+import com.tinyclaw.domain.message.ToolCall;
+import com.tinyclaw.domain.message.ToolResult;
+import com.tinyclaw.ports.reporter.Reporter;
+
+/**
+ * Reporter that prints events to standard output for CLI usage.
+ */
+public class ConsoleReporter implements Reporter {
+
+    @Override
+    public void onThinkingStarted(String runId) {
+        System.out.println("[run " + runId + "] Thinking...");
+    }
+
+    @Override
+    public void onAssistantMessage(String runId, String content) {
+        if (!content.isBlank()) {
+            System.out.println("[run " + runId + "] Assistant: " + content);
+        }
+    }
+
+    @Override
+    public void onToolCall(String runId, ToolCall toolCall) {
+        System.out.println("[run " + runId + "] Tool call: " + toolCall.name() + " (" + toolCall.id() + ")");
+    }
+
+    @Override
+    public void onToolResult(String runId, ToolResult toolResult) {
+        String status = toolResult.error() ? "FAILED" : "OK";
+        System.out.println("[run " + runId + "] Tool result [" + status + "]: " + toolResult.output());
+    }
+
+    @Override
+    public void onRunCompleted(String runId, AgentRunResult result) {
+        System.out.println("[run " + runId + "] Completed in " + result.turnCount() + " turn(s).");
+    }
+
+    @Override
+    public void onRunFailed(String runId, String reason) {
+        System.out.println("[run " + runId + "] Failed: " + reason);
+    }
+}
