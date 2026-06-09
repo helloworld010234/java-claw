@@ -1,0 +1,22 @@
+spring:
+  application:
+    name: java-claw
+  profiles:
+    active: dev
+
+tiny-claw:
+  model:
+    provider: spring-ai
+    name: glm-4.5-air
+    base-url: ${LLM_BASE_URL:}
+    api-key: ${LLM_API_KEY:}
+  agent:
+    max-turns: 20
+    max-tool-calls-per-turn: 8
+    max-runtime-seconds: 600
+  tool:
+    shell-timeout-seconds: 30
+    max-output-chars: 8000
+  approval:
+    enabled: true
+    timeout-seconds: 600
