@@ -6,7 +6,6 @@ import com.tinyclaw.domain.message.ToolCall;
 import com.tinyclaw.domain.message.ToolResult;
 import com.tinyclaw.ports.tool.AgentTool;
 import com.tinyclaw.ports.tool.ToolExecutionContext;
-import org.springframework.stereotype.Component;
 
 import java.util.List;
 import java.util.Map;
@@ -16,7 +15,6 @@ import java.util.stream.Collectors;
 /**
  * Application-level registry for agent tools.
  */
-@Component
 public class ToolRegistry {
 
     private final Map<String, AgentTool> tools;

@@ -7,6 +7,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 import picocli.CommandLine;
 
+import java.io.IOException;
 import java.nio.file.Path;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -33,6 +34,12 @@ class CliBootstrapTest {
     }
 
     @Test
+    void rootCommandShouldContainToolSubcommand() {
+        CommandLine cmd = new CommandLine(rootCommand, factory);
+        assertThat(cmd.getSubcommands()).containsKey("tool");
+    }
+
+    @Test
     void runViaCommandLineShouldSucceed(@TempDir Path tempDir) {
         CommandLine cmd = new CommandLine(rootCommand, factory);
         int exitCode = cmd.execute(
@@ -40,6 +47,21 @@ class CliBootstrapTest {
             "--prompt", "Hello",
             "--dir", tempDir.toString(),
             "--session", "smoke"
+        );
+
+        assertThat(exitCode).isZero();
+    }
+
+    @Test
+    void toolViaCommandLineShouldSucceed(@TempDir Path tempDir) throws IOException {
+        java.nio.file.Files.writeString(tempDir.resolve("notes.txt"), "hello");
+        CommandLine cmd = new CommandLine(rootCommand, factory);
+        int exitCode = cmd.execute(
+            "tool",
+            "--name", "read_file",
+            "--args", "{\"path\":\"notes.txt\"}",
+            "--dir", tempDir.toString(),
+            "--call-id", "smoke-call"
         );
 
         assertThat(exitCode).isZero();
