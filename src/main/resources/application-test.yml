@@ -10,3 +10,7 @@ spring:
   sql:
     init:
       mode: never
+  ai:
+    openai:
+      api-key: dummy-key-for-test-only
+      base-url: http://localhost:12345

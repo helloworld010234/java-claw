@@ -1,8 +1,6 @@
 spring:
   application:
     name: java-claw
-  profiles:
-    active: dev
 
 tiny-claw:
   model:
