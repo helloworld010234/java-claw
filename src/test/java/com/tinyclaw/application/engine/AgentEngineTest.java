@@ -481,5 +481,10 @@ class AgentEngineTest {
             requests.removeIf(r -> r.id().equals(request.id()));
             requests.add(request);
         }
+
+        @Override
+        public boolean claimForResume(String approvalId, java.time.Instant now) {
+            return false;
+        }
     }
 }

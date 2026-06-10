@@ -155,4 +155,129 @@ class JdbcApprovalRepositoryTest {
         Optional<ApprovalRequest> found = repository.findByRunIdAndToolCallId("missing", "missing");
         assertThat(found).isEmpty();
     }
+
+    @Test
+    void claimForResumeOnApprovedReturnsTrueAndSetsResuming() {
+        seedSessionAndRun("sess-claim", "run-claim");
+        ApprovalRequest request = ApprovalRequest.pending(
+            "apr-claim", "run-claim", "sess-claim", "tc-1", "shell_command", "args", Instant.now()
+        );
+        repository.save(request);
+        repository.update(request.approve("ok", Instant.now()));
+
+        boolean claimed = repository.claimForResume("apr-claim", Instant.now());
+
+        assertThat(claimed).isTrue();
+        ApprovalRequest after = repository.findById("apr-claim").orElseThrow();
+        assertThat(after.status()).isEqualTo(ApprovalStatus.RESUMING);
+        assertThat(after.decisionReason()).isEqualTo("claiming for resume");
+    }
+
+    @Test
+    void claimForResumeOnAlreadyResumingReturnsFalse() {
+        seedSessionAndRun("sess-claim2", "run-claim2");
+        ApprovalRequest request = ApprovalRequest.pending(
+            "apr-claim2", "run-claim2", "sess-claim2", "tc-1", "shell_command", "args", Instant.now()
+        );
+        repository.save(request);
+        repository.update(request.approve("ok", Instant.now()));
+        repository.claimForResume("apr-claim2", Instant.now());
+
+        boolean second = repository.claimForResume("apr-claim2", Instant.now());
+
+        assertThat(second).isFalse();
+    }
+
+    @Test
+    void claimForResumeOnResumedReturnsFalse() {
+        seedSessionAndRun("sess-claim3", "run-claim3");
+        ApprovalRequest request = ApprovalRequest.pending(
+            "apr-claim3", "run-claim3", "sess-claim3", "tc-1", "shell_command", "args", Instant.now()
+        );
+        repository.save(request);
+        repository.update(request.approve("ok", Instant.now()));
+        repository.claimForResume("apr-claim3", Instant.now());
+        ApprovalRequest resuming = repository.findById("apr-claim3").orElseThrow();
+        repository.update(resuming.markResumed("done", Instant.now()));
+
+        boolean claimed = repository.claimForResume("apr-claim3", Instant.now());
+
+        assertThat(claimed).isFalse();
+    }
+
+    @Test
+    void claimForResumeOnPendingReturnsFalse() {
+        seedSessionAndRun("sess-claim4", "run-claim4");
+        ApprovalRequest request = ApprovalRequest.pending(
+            "apr-claim4", "run-claim4", "sess-claim4", "tc-1", "shell_command", "args", Instant.now()
+        );
+        repository.save(request);
+
+        boolean claimed = repository.claimForResume("apr-claim4", Instant.now());
+
+        assertThat(claimed).isFalse();
+    }
+
+    @Test
+    void claimForResumeOnRejectedReturnsFalse() {
+        seedSessionAndRun("sess-claim5", "run-claim5");
+        ApprovalRequest request = ApprovalRequest.pending(
+            "apr-claim5", "run-claim5", "sess-claim5", "tc-1", "shell_command", "args", Instant.now()
+        );
+        repository.save(request);
+        repository.update(request.reject("no", Instant.now()));
+
+        boolean claimed = repository.claimForResume("apr-claim5", Instant.now());
+
+        assertThat(claimed).isFalse();
+    }
+
+    @Test
+    void claimForResumeOnExpiredReturnsFalse() {
+        seedSessionAndRun("sess-claim6", "run-claim6");
+        ApprovalRequest request = ApprovalRequest.pending(
+            "apr-claim6", "run-claim6", "sess-claim6", "tc-1", "shell_command", "args", Instant.now()
+        );
+        repository.save(request);
+        repository.update(request.expire(Instant.now()));
+
+        boolean claimed = repository.claimForResume("apr-claim6", Instant.now());
+
+        assertThat(claimed).isFalse();
+    }
+
+    @Test
+    void concurrentClaimForResumeOnlyOneSucceeds() throws Exception {
+        seedSessionAndRun("sess-conc", "run-conc");
+        ApprovalRequest request = ApprovalRequest.pending(
+            "apr-conc", "run-conc", "sess-conc", "tc-1", "shell_command", "args", Instant.now()
+        );
+        repository.save(request);
+        repository.update(request.approve("ok", Instant.now()));
+
+        java.util.concurrent.CountDownLatch latch = new java.util.concurrent.CountDownLatch(1);
+        java.util.concurrent.ExecutorService executor = java.util.concurrent.Executors.newFixedThreadPool(2);
+        try {
+            java.util.concurrent.Future<Boolean> f1 = executor.submit(() -> {
+                latch.await();
+                return repository.claimForResume("apr-conc", Instant.now());
+            });
+            java.util.concurrent.Future<Boolean> f2 = executor.submit(() -> {
+                latch.await();
+                return repository.claimForResume("apr-conc", Instant.now());
+            });
+            Thread.sleep(50);
+            latch.countDown();
+
+            boolean r1 = f1.get();
+            boolean r2 = f2.get();
+            long successCount = (r1 ? 1 : 0) + (r2 ? 1 : 0);
+            assertThat(successCount).isEqualTo(1);
+
+            ApprovalRequest after = repository.findById("apr-conc").orElseThrow();
+            assertThat(after.status()).isEqualTo(ApprovalStatus.RESUMING);
+        } finally {
+            executor.shutdownNow();
+        }
+    }
 }

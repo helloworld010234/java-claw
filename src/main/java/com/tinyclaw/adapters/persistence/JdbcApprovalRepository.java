@@ -129,6 +129,26 @@ public class JdbcApprovalRepository implements ApprovalRepositoryPort {
         );
     }
 
+    @Override
+    public boolean claimForResume(String approvalId, Instant now) {
+        String sql = """
+            UPDATE approval_requests
+            SET status = 'RESUMING',
+                decision_reason = ?,
+                decided_at = ?,
+                updated_at = ?
+            WHERE id = ?
+              AND status = 'APPROVED'
+            """;
+        int rows = jdbcTemplate.update(sql,
+            "claiming for resume",
+            Timestamp.from(now),
+            Timestamp.from(now),
+            approvalId
+        );
+        return rows == 1;
+    }
+
     private ApprovalRequest mapRow(java.sql.ResultSet rs, int rowNum) throws java.sql.SQLException {
         String statusStr = rs.getString("status");
         ApprovalStatus status = ApprovalStatus.valueOf(statusStr);

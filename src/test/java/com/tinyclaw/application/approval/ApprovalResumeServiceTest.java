@@ -26,6 +26,10 @@ import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -42,7 +46,7 @@ class ApprovalResumeServiceTest {
         AgentTool echoTool = new AgentToolStub("shell_command", ToolResult.success("tc-1", "resumed-ok"));
         ToolRegistry registry = new ToolRegistry(List.of(echoTool));
         ApprovalResumeService service = new ApprovalResumeService(
-            approvalRepository, runRepository, toolExecutionRepository, registry, CLOCK
+            approvalRepository, runRepository, toolExecutionRepository, registry, new ApprovalResumeLockRegistry(), CLOCK
         );
         seedApprovedApprovalAndRun("apr-1", "run-1", "sess-1", "tc-1", "shell_command", "{\"command\":\"echo hi\"}");
 
@@ -55,12 +59,15 @@ class ApprovalResumeServiceTest {
         assertThat(toolExecutionRepository.findByRunId("run-1")).hasSize(2);
         assertThat(runRepository.findById("run-1").orElseThrow().status())
             .isEqualTo(AgentRunStatus.COMPLETED);
+        ApprovalRequest after = approvalRepository.findById("apr-1").orElseThrow();
+        assertThat(after.status()).isEqualTo(ApprovalStatus.RESUMED);
+        assertThat(after.decisionReason()).isEqualTo("resumed successfully");
     }
 
     @Test
     void pendingApprovalCannotResume() {
         ApprovalResumeService service = new ApprovalResumeService(
-            approvalRepository, runRepository, toolExecutionRepository, new ToolRegistry(List.of()), CLOCK
+            approvalRepository, runRepository, toolExecutionRepository, new ToolRegistry(List.of()), new ApprovalResumeLockRegistry(), CLOCK
         );
         seedApproval("apr-pending", "run-1", "sess-1", "tc-1", "shell_command", ApprovalStatus.PENDING);
 
@@ -76,7 +83,7 @@ class ApprovalResumeServiceTest {
     @Test
     void rejectedApprovalCannotResume() {
         ApprovalResumeService service = new ApprovalResumeService(
-            approvalRepository, runRepository, toolExecutionRepository, new ToolRegistry(List.of()), CLOCK
+            approvalRepository, runRepository, toolExecutionRepository, new ToolRegistry(List.of()), new ApprovalResumeLockRegistry(), CLOCK
         );
         seedApproval("apr-rejected", "run-1", "sess-1", "tc-1", "shell_command", ApprovalStatus.REJECTED);
 
@@ -90,7 +97,7 @@ class ApprovalResumeServiceTest {
     @Test
     void missingApprovalReturnsFailure() {
         ApprovalResumeService service = new ApprovalResumeService(
-            approvalRepository, runRepository, toolExecutionRepository, new ToolRegistry(List.of()), CLOCK
+            approvalRepository, runRepository, toolExecutionRepository, new ToolRegistry(List.of()), new ApprovalResumeLockRegistry(), CLOCK
         );
 
         ApprovalResumeResult result = service.resume("missing");
@@ -103,7 +110,7 @@ class ApprovalResumeServiceTest {
     @Test
     void missingRunReturnsFailure() {
         ApprovalResumeService service = new ApprovalResumeService(
-            approvalRepository, runRepository, toolExecutionRepository, new ToolRegistry(List.of()), CLOCK
+            approvalRepository, runRepository, toolExecutionRepository, new ToolRegistry(List.of()), new ApprovalResumeLockRegistry(), CLOCK
         );
         ApprovalRequest pending = ApprovalRequest.pending(
             "apr-run-missing", "run-missing", "sess-1", "tc-1", "shell_command", "args", CLOCK.instant()
@@ -121,7 +128,7 @@ class ApprovalResumeServiceTest {
     @Test
     void missingOriginalToolExecutionReturnsFailure() {
         ApprovalResumeService service = new ApprovalResumeService(
-            approvalRepository, runRepository, toolExecutionRepository, new ToolRegistry(List.of()), CLOCK
+            approvalRepository, runRepository, toolExecutionRepository, new ToolRegistry(List.of()), new ApprovalResumeLockRegistry(), CLOCK
         );
         seedApprovedApprovalAndRun("apr-no-exec", "run-1", "sess-1", "tc-1", "shell_command", "{}");
         // Do not append any tool execution record
@@ -139,7 +146,7 @@ class ApprovalResumeServiceTest {
         AgentTool failingTool = new AgentToolStub("shell_command", ToolResult.failure("tc-1", "boom"));
         ToolRegistry registry = new ToolRegistry(List.of(failingTool));
         ApprovalResumeService service = new ApprovalResumeService(
-            approvalRepository, runRepository, toolExecutionRepository, registry, CLOCK
+            approvalRepository, runRepository, toolExecutionRepository, registry, new ApprovalResumeLockRegistry(), CLOCK
         );
         seedApprovedApprovalAndRun("apr-fail", "run-1", "sess-1", "tc-1", "shell_command", "{\"command\":\"false\"}");
 
@@ -152,6 +159,9 @@ class ApprovalResumeServiceTest {
         AgentRunSummary run = runRepository.findById("run-1").orElseThrow();
         assertThat(run.status()).isEqualTo(AgentRunStatus.FAILED);
         assertThat(run.errorReason()).contains("Resume failed");
+        ApprovalRequest after = approvalRepository.findById("apr-fail").orElseThrow();
+        assertThat(after.status()).isEqualTo(ApprovalStatus.RESUMED);
+        assertThat(after.decisionReason()).isEqualTo("resume attempted but tool failed");
     }
 
     @Test
@@ -161,7 +171,7 @@ class ApprovalResumeServiceTest {
             new com.tinyclaw.application.tool.DangerousCommandPolicy()
         ));
         ApprovalResumeService service = new ApprovalResumeService(
-            approvalRepository, runRepository, toolExecutionRepository, registry, CLOCK
+            approvalRepository, runRepository, toolExecutionRepository, registry, new ApprovalResumeLockRegistry(), CLOCK
         );
         seedApprovedApprovalAndRun("apr-danger", "run-1", "sess-1", "tc-1", "shell_command",
             "{\"command\":\"rm -rf /\"}");
@@ -172,6 +182,76 @@ class ApprovalResumeServiceTest {
         assertThat(result.toolError()).isTrue();
         assertThat(result.output()).contains("Dangerous command blocked");
         assertThat(toolExecutionRepository.findByRunId("run-1")).hasSize(2);
+        ApprovalRequest after = approvalRepository.findById("apr-danger").orElseThrow();
+        assertThat(after.status()).isEqualTo(ApprovalStatus.RESUMED);
+        assertThat(after.decisionReason()).isEqualTo("resume attempted but tool failed");
+    }
+
+    @Test
+    void resumedApprovalCannotResumeAgain() {
+        AgentTool echoTool = new AgentToolStub("shell_command", ToolResult.success("tc-1", "resumed-ok"));
+        ToolRegistry registry = new ToolRegistry(List.of(echoTool));
+        ApprovalResumeService service = new ApprovalResumeService(
+            approvalRepository, runRepository, toolExecutionRepository, registry, new ApprovalResumeLockRegistry(), CLOCK
+        );
+        seedApprovedApprovalAndRun("apr-twice", "run-1", "sess-1", "tc-1", "shell_command", "{\"command\":\"echo hi\"}");
+
+        ApprovalResumeResult first = service.resume("apr-twice");
+        assertThat(first.resumed()).isTrue();
+        assertThat(first.toolError()).isFalse();
+
+        ApprovalResumeResult second = service.resume("apr-twice");
+        assertThat(second.resumed()).isFalse();
+        assertThat(second.toolError()).isTrue();
+        assertThat(second.output()).contains("not approved").contains("RESUMED");
+    }
+
+    @Test
+    void parallelResumeOnlyExecutesToolOnce() throws Exception {
+        CountDownLatch latch = new CountDownLatch(1);
+        AtomicInteger callCount = new AtomicInteger(0);
+        AgentTool latchTool = new AgentTool() {
+            @Override public String name() { return "shell_command"; }
+            @Override public ToolDefinition definition() {
+                return new ToolDefinition("shell_command", "Test", "{}");
+            }
+            @Override public ToolResult execute(ToolCall call, ToolExecutionContext context) {
+                try {
+                    latch.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return ToolResult.failure(call.id(), "interrupted");
+                }
+                callCount.incrementAndGet();
+                return ToolResult.success(call.id(), "ok-" + callCount.get());
+            }
+        };
+        ToolRegistry registry = new ToolRegistry(List.of(latchTool));
+        ApprovalResumeService service = new ApprovalResumeService(
+            approvalRepository, runRepository, toolExecutionRepository, registry, new ApprovalResumeLockRegistry(), CLOCK
+        );
+        seedApprovedApprovalAndRun("apr-parallel", "run-1", "sess-1", "tc-1", "shell_command", "{\"command\":\"echo hi\"}");
+
+        var executor = Executors.newFixedThreadPool(2);
+        try {
+            Future<ApprovalResumeResult> f1 = executor.submit(() -> service.resume("apr-parallel"));
+            Future<ApprovalResumeResult> f2 = executor.submit(() -> service.resume("apr-parallel"));
+            // Give threads time to reach the latch
+            Thread.sleep(50);
+            latch.countDown();
+
+            ApprovalResumeResult r1 = f1.get();
+            ApprovalResumeResult r2 = f2.get();
+
+            long successCount = List.of(r1, r2).stream().filter(ApprovalResumeResult::resumed).count();
+            assertThat(successCount).isEqualTo(1);
+            assertThat(callCount.get()).isEqualTo(1);
+
+            ApprovalRequest after = approvalRepository.findById("apr-parallel").orElseThrow();
+            assertThat(after.status()).isEqualTo(ApprovalStatus.RESUMED);
+        } finally {
+            executor.shutdownNow();
+        }
     }
 
     @Test
@@ -179,7 +259,7 @@ class ApprovalResumeServiceTest {
         SpyTool spyTool = new SpyTool("shell_command", ToolResult.success("tc-1", "ok"));
         ToolRegistry registry = new ToolRegistry(List.of(spyTool));
         ApprovalResumeService service = new ApprovalResumeService(
-            approvalRepository, runRepository, toolExecutionRepository, registry, CLOCK
+            approvalRepository, runRepository, toolExecutionRepository, registry, new ApprovalResumeLockRegistry(), CLOCK
         );
         String args = "{\"command\":\"echo resumed-ok\"}";
         seedApprovedApprovalAndRun("apr-args", "run-1", "sess-1", "tc-1", "shell_command", args);
@@ -189,6 +269,83 @@ class ApprovalResumeServiceTest {
         assertThat(spyTool.lastCall).isNotNull();
         assertThat(spyTool.lastCall.name()).isEqualTo("shell_command");
         assertThat(spyTool.lastCall.argumentsJson()).isEqualTo(args);
+    }
+
+    @Test
+    void claimSuccessButMissingRunConsumesApproval() {
+        ApprovalResumeService service = new ApprovalResumeService(
+            approvalRepository, runRepository, toolExecutionRepository, new ToolRegistry(List.of()), new ApprovalResumeLockRegistry(), CLOCK
+        );
+        ApprovalRequest pending = ApprovalRequest.pending(
+            "apr-run-missing", "run-missing", "sess-1", "tc-1", "shell_command", "args", CLOCK.instant()
+        );
+        approvalRepository.save(pending);
+        approvalRepository.update(pending.approve("ok", CLOCK.instant()));
+
+        ApprovalResumeResult result = service.resume("apr-run-missing");
+
+        assertThat(result.resumed()).isFalse();
+        assertThat(result.toolError()).isTrue();
+        assertThat(result.output()).contains("Run not found");
+        ApprovalRequest after = approvalRepository.findById("apr-run-missing").orElseThrow();
+        assertThat(after.status()).isEqualTo(ApprovalStatus.RESUMED);
+        assertThat(after.decisionReason()).contains("resume failed before tool execution");
+    }
+
+    @Test
+    void claimSuccessButMissingSessionConsumesApproval() {
+        ApprovalResumeService service = new ApprovalResumeService(
+            approvalRepository, runRepository, toolExecutionRepository, new ToolRegistry(List.of()), new ApprovalResumeLockRegistry(), CLOCK
+        );
+        Session session = Session.reconstruct("sess-missing", "/tmp/ws", SessionStatus.ACTIVE,
+            CLOCK.instant(), CLOCK.instant());
+        runRepository.saveSession(session);
+        AgentRun run = AgentRun.start("run-missing-session", "sess-missing", 5, CLOCK.instant())
+            .fail("Approval required", CLOCK.instant());
+        runRepository.saveRunStarted(run, "plan", "test");
+        ApprovalRequest pending = ApprovalRequest.pending(
+            "apr-missing-session", "run-missing-session", "sess-missing", "tc-1", "shell_command", "args", CLOCK.instant()
+        );
+        approvalRepository.save(pending);
+        approvalRepository.update(pending.approve("ok", CLOCK.instant()));
+        toolExecutionRepository.append("run-missing-session", new ToolExecutionRecord(
+            "te-1", "run-missing-session", "sess-missing", "tc-1", "shell_command", "args",
+            "Approval required: apr-missing-session", true, CLOCK.instant(), CLOCK.instant()
+        ));
+        // Now delete the session
+        // InMemoryRunRepository doesn't support delete, so we use a fresh repo without the session
+        InMemoryRunRepository freshRunRepository = new InMemoryRunRepository();
+        freshRunRepository.saveRunStarted(run, "plan", "test");
+        ApprovalResumeService serviceWithMissingSession = new ApprovalResumeService(
+            approvalRepository, freshRunRepository, toolExecutionRepository, new ToolRegistry(List.of()), new ApprovalResumeLockRegistry(), CLOCK
+        );
+
+        ApprovalResumeResult result = serviceWithMissingSession.resume("apr-missing-session");
+
+        assertThat(result.resumed()).isFalse();
+        assertThat(result.toolError()).isTrue();
+        assertThat(result.output()).contains("Session not found");
+        ApprovalRequest after = approvalRepository.findById("apr-missing-session").orElseThrow();
+        assertThat(after.status()).isEqualTo(ApprovalStatus.RESUMED);
+        assertThat(after.decisionReason()).contains("resume failed before tool execution");
+    }
+
+    @Test
+    void claimSuccessButMissingToolExecutionConsumesApproval() {
+        ApprovalResumeService service = new ApprovalResumeService(
+            approvalRepository, runRepository, toolExecutionRepository, new ToolRegistry(List.of()), new ApprovalResumeLockRegistry(), CLOCK
+        );
+        seedApprovedApprovalAndRun("apr-no-exec-claim", "run-1", "sess-1", "tc-1", "shell_command", "{}");
+        toolExecutionRepository.clear();
+
+        ApprovalResumeResult result = service.resume("apr-no-exec-claim");
+
+        assertThat(result.resumed()).isFalse();
+        assertThat(result.toolError()).isTrue();
+        assertThat(result.output()).contains("Original tool execution not found");
+        ApprovalRequest after = approvalRepository.findById("apr-no-exec-claim").orElseThrow();
+        assertThat(after.status()).isEqualTo(ApprovalStatus.RESUMED);
+        assertThat(after.decisionReason()).contains("resume failed before tool execution");
     }
 
     private void seedApprovedApprovalAndRun(String approvalId, String runId, String sessionId,
@@ -328,6 +485,22 @@ class ApprovalResumeServiceTest {
         public void update(ApprovalRequest request) {
             requests.removeIf(r -> r.id().equals(request.id()));
             requests.add(request);
+        }
+
+        @Override
+        public boolean claimForResume(String approvalId, Instant now) {
+            synchronized (requests) {
+                Optional<ApprovalRequest> maybe = requests.stream()
+                    .filter(r -> r.id().equals(approvalId) && r.status() == ApprovalStatus.APPROVED)
+                    .findFirst();
+                if (maybe.isEmpty()) {
+                    return false;
+                }
+                ApprovalRequest claimed = maybe.get().markResuming("claiming for resume", now);
+                requests.removeIf(r -> r.id().equals(approvalId));
+                requests.add(claimed);
+                return true;
+            }
         }
     }
 

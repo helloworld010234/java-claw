@@ -130,6 +130,55 @@ public final class ApprovalRequest {
                 ApprovalStatus.EXPIRED, null, requestedAt, now);
     }
 
+    /**
+     * 标记审批正在 resume 中（claim 成功）。
+     *
+     * <p>只能从 APPROVED 状态转换。数据库原子 claim 成功后调用。</p>
+     *
+     * @param reason 消费理由，必须非空
+     * @param now    消费时间，不能早于 requestedAt
+     */
+    public ApprovalRequest markResuming(String reason, Instant now) {
+        DomainGuards.requireNonBlank(reason, "reason");
+        DomainGuards.requireNonNull(now, "now");
+        assertApproved("markResuming");
+        assertDecidedAtNotBeforeRequestedAt(now);
+        return new ApprovalRequest(id, runId, sessionId, toolCallId, toolName, argumentsPreview,
+                ApprovalStatus.RESUMING, reason, requestedAt, now);
+    }
+
+    /**
+     * 标记审批已被 resume 消费完毕。
+     *
+     * <p>只能从 RESUMING 状态转换。工具执行后（无论成功或失败）调用，
+     * 防止同一 approval 被重复 resume。</p>
+     *
+     * @param reason 消费理由，必须非空
+     * @param now    消费时间，不能早于 requestedAt
+     */
+    public ApprovalRequest markResumed(String reason, Instant now) {
+        DomainGuards.requireNonBlank(reason, "reason");
+        DomainGuards.requireNonNull(now, "now");
+        assertResuming("markResumed");
+        assertDecidedAtNotBeforeRequestedAt(now);
+        return new ApprovalRequest(id, runId, sessionId, toolCallId, toolName, argumentsPreview,
+                ApprovalStatus.RESUMED, reason, requestedAt, now);
+    }
+
+    private void assertApproved(String operation) {
+        if (status != ApprovalStatus.APPROVED) {
+            throw new TinyClawDomainException(
+                    "Cannot perform '" + operation + "' on approval request in status: " + status);
+        }
+    }
+
+    private void assertResuming(String operation) {
+        if (status != ApprovalStatus.RESUMING) {
+            throw new TinyClawDomainException(
+                    "Cannot perform '" + operation + "' on approval request in status: " + status);
+        }
+    }
+
     private void assertPending(String operation) {
         if (status != ApprovalStatus.PENDING) {
             throw new TinyClawDomainException(

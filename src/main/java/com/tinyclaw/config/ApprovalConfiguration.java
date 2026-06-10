@@ -1,5 +1,6 @@
 package com.tinyclaw.config;
 
+import com.tinyclaw.application.approval.ApprovalResumeLockRegistry;
 import com.tinyclaw.application.approval.ApprovalResumeService;
 import com.tinyclaw.application.tool.ToolRegistry;
 import com.tinyclaw.ports.persistence.ApprovalRepositoryPort;
@@ -17,16 +18,23 @@ import java.time.Clock;
 public class ApprovalConfiguration {
 
     @Bean
+    ApprovalResumeLockRegistry approvalResumeLockRegistry() {
+        return new ApprovalResumeLockRegistry();
+    }
+
+    @Bean
     ApprovalResumeService approvalResumeService(ApprovalRepositoryPort approvalRepository,
                                                 RunRepositoryPort runRepository,
                                                 ToolExecutionRepositoryPort toolExecutionRepository,
                                                 ToolRegistry toolRegistry,
+                                                ApprovalResumeLockRegistry lockRegistry,
                                                 Clock clock) {
         return new ApprovalResumeService(
             approvalRepository,
             runRepository,
             toolExecutionRepository,
             toolRegistry,
+            lockRegistry,
             clock
         );
     }

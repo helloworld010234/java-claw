@@ -235,6 +235,47 @@ class ApprovalGatePolicyTest {
         assertThat(decision.reason()).contains("does not match");
     }
 
+    @Test
+    void resumedApprovalIdIsDenied() {
+        ApprovalGatePolicy policy = new ApprovalGatePolicy(repository, List.of("shell_command"), clock);
+        ApprovalRequest pending = ApprovalRequest.pending(
+            "apr-resumed", "run-1", "sess-1", "tc-1", "shell_command", "args", clock.instant()
+        );
+        repository.save(pending);
+        repository.update(pending.approve("ok", clock.instant()));
+        ApprovalRequest approved = repository.findById("apr-resumed").orElseThrow();
+        repository.update(approved.markResuming("claiming for resume", clock.instant()));
+        ApprovalRequest resuming = repository.findById("apr-resumed").orElseThrow();
+        repository.update(resuming.markResumed("already consumed", clock.instant()));
+
+        ToolExecutionContext ctx = CONTEXT.withApprovedApproval("apr-resumed");
+        ToolExecutionDecision decision = policy.decide(
+            ToolCall.of("tc-1", "shell_command", "{\"command\":\"echo hi\"}"), ctx
+        );
+
+        assertThat(decision.allowed()).isFalse();
+        assertThat(decision.reason()).contains("not approved: RESUMED");
+    }
+
+    @Test
+    void resumingApprovalIdIsAllowed() {
+        ApprovalGatePolicy policy = new ApprovalGatePolicy(repository, List.of("shell_command"), clock);
+        ApprovalRequest pending = ApprovalRequest.pending(
+            "apr-resuming", "run-1", "sess-1", "tc-1", "shell_command", "args", clock.instant()
+        );
+        repository.save(pending);
+        repository.update(pending.approve("ok", clock.instant()));
+        ApprovalRequest approved = repository.findById("apr-resuming").orElseThrow();
+        repository.update(approved.markResuming("claiming for resume", clock.instant()));
+
+        ToolExecutionContext ctx = CONTEXT.withApprovedApproval("apr-resuming");
+        ToolExecutionDecision decision = policy.decide(
+            ToolCall.of("tc-1", "shell_command", "{\"command\":\"echo hi\"}"), ctx
+        );
+
+        assertThat(decision.allowed()).isTrue();
+    }
+
     private String extractApprovalId(String reason) {
         return reason.substring(reason.lastIndexOf(':') + 1).trim();
     }
@@ -278,6 +319,11 @@ class ApprovalGatePolicyTest {
         public void update(ApprovalRequest request) {
             requests.removeIf(r -> r.id().equals(request.id()));
             requests.add(request);
+        }
+
+        @Override
+        public boolean claimForResume(String approvalId, java.time.Instant now) {
+            return false;
         }
     }
 }

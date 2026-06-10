@@ -913,7 +913,7 @@ class RunCommandAuditTest {
         approvalRepository.update(pending.approve("operator confirmed", java.time.Instant.now()));
 
         ApprovalResumeService resumeService = new ApprovalResumeService(
-            approvalRepository, runRepository, toolExecutionRepository, registry, java.time.Clock.systemUTC()
+            approvalRepository, runRepository, toolExecutionRepository, registry, new com.tinyclaw.application.approval.ApprovalResumeLockRegistry(), java.time.Clock.systemUTC()
         );
         ResumeApprovalCommand resumeCommand = new ResumeApprovalCommand(resumeService);
         out.reset();
@@ -936,5 +936,95 @@ class RunCommandAuditTest {
         assertThat(executionsAfter.get(0).isError()).isTrue();
         assertThat(executionsAfter.get(0).output()).contains("Approval required");
         assertThat(executionsAfter.get(1).isError()).isFalse();
+    }
+
+    @Test
+    void planFileWithApprovalCanBeResumedOnlyOnce() throws Exception {
+        String command = System.getProperty("os.name").toLowerCase().contains("windows")
+            ? "Write-Output 'once'"
+            : "echo once";
+        String plan = """
+            {
+              "stopOnError": true,
+              "steps": [
+                {"id": "shell-step", "tool": "shell_command", "args": {"command": "%s"}}
+              ]
+            }
+            """.formatted(command);
+        Path planFile = tempDir.resolve("resume-once-plan.json");
+        Files.writeString(planFile, plan);
+
+        ToolRegistry registry = new ToolRegistry(
+            List.of(
+                new ReadFileTool(),
+                new WriteFileTool(),
+                new EditFileTool(),
+                new ShellCommandTool()
+            ),
+            List.of(
+                new AllowAllPolicy(),
+                new DangerousCommandPolicy(),
+                new ApprovalGatePolicy(approvalRepository, List.of("shell_command"), java.time.Clock.systemUTC())
+            )
+        );
+        InMemorySessionService sessionService = new InMemorySessionService();
+        AgentEngine agentEngine = new AgentEngine(
+            request -> new LlmResponse("", List.of(), null),
+            registry, new PromptComposer(), new NoOpReporter(), sessionService
+        );
+        RunCommand runCommand = new RunCommand(
+            new ScriptedRunExecutor(registry, new ObjectMapper()),
+            agentEngine,
+            new ObjectMapper(),
+            sessionService,
+            runRepository,
+            messageRepository,
+            toolExecutionRepository
+        );
+
+        int runExit = new CommandLine(runCommand).execute(
+            "--prompt", "plan shell",
+            "--dir", tempDir.toString(),
+            "--session", "audit-resume-once",
+            "--plan-file", planFile.toString()
+        );
+        restoreStreams();
+
+        assertThat(runExit).isEqualTo(1);
+        String runId = extractRunId(out.toString());
+        assertThat(runId).isNotNull();
+
+        List<ToolExecutionRecord> executions = toolExecutionRepository.findByRunId(runId);
+        assertThat(executions).hasSize(1);
+        assertThat(executions.get(0).isError()).isTrue();
+        String approvalId = extractApprovalId(executions.get(0).output());
+
+        var pending = approvalRepository.findById(approvalId).orElseThrow();
+        approvalRepository.update(pending.approve("ok", java.time.Instant.now()));
+
+        ApprovalResumeService resumeService = new ApprovalResumeService(
+            approvalRepository, runRepository, toolExecutionRepository, registry,
+            new com.tinyclaw.application.approval.ApprovalResumeLockRegistry(), java.time.Clock.systemUTC()
+        );
+        ResumeApprovalCommand resumeCommand = new ResumeApprovalCommand(resumeService);
+
+        // First resume succeeds
+        out.reset();
+        err.reset();
+        System.setOut(new PrintStream(out));
+        System.setErr(new PrintStream(err));
+        int first = new CommandLine(resumeCommand).execute("--approval-id", approvalId);
+        restoreStreams();
+        assertThat(first).isZero();
+
+        // Second resume fails because approval is already RESUMED
+        out.reset();
+        err.reset();
+        System.setOut(new PrintStream(out));
+        System.setErr(new PrintStream(err));
+        int second = new CommandLine(resumeCommand).execute("--approval-id", approvalId);
+        restoreStreams();
+        assertThat(second).isEqualTo(2);
+        assertThat(out.toString()).contains("not approved").contains("RESUMED");
     }
 }

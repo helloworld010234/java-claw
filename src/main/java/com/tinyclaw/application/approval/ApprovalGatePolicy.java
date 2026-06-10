@@ -94,7 +94,7 @@ public class ApprovalGatePolicy implements ToolExecutionPolicy {
         }
 
         ApprovalRequest approval = maybeApproval.get();
-        if (approval.status() != ApprovalStatus.APPROVED) {
+        if (approval.status() != ApprovalStatus.APPROVED && approval.status() != ApprovalStatus.RESUMING) {
             return ToolExecutionDecision.deny(
                 "Approval is not approved: " + approval.status()
             );

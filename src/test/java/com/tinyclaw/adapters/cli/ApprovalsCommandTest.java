@@ -234,7 +234,7 @@ class ApprovalsCommandTest {
         };
         ToolRegistry registry = new ToolRegistry(List.of(echoTool));
         ApprovalResumeService service = new ApprovalResumeService(
-            approvalRepository, runRepository, toolExecutionRepository, registry, java.time.Clock.systemUTC()
+            approvalRepository, runRepository, toolExecutionRepository, registry, new com.tinyclaw.application.approval.ApprovalResumeLockRegistry(), java.time.Clock.systemUTC()
         );
         ResumeApprovalCommand cmd = new ResumeApprovalCommand(service);
 
@@ -258,7 +258,7 @@ class ApprovalsCommandTest {
 
         ApprovalResumeService service = new ApprovalResumeService(
             approvalRepository, runRepository, toolExecutionRepository,
-            new ToolRegistry(List.of()), java.time.Clock.systemUTC()
+            new ToolRegistry(List.of()), new com.tinyclaw.application.approval.ApprovalResumeLockRegistry(), java.time.Clock.systemUTC()
         );
         ResumeApprovalCommand cmd = new ResumeApprovalCommand(service);
 
@@ -275,7 +275,7 @@ class ApprovalsCommandTest {
 
         ApprovalResumeService service = new ApprovalResumeService(
             approvalRepository, runRepository, toolExecutionRepository,
-            new ToolRegistry(List.of()), java.time.Clock.systemUTC()
+            new ToolRegistry(List.of()), new com.tinyclaw.application.approval.ApprovalResumeLockRegistry(), java.time.Clock.systemUTC()
         );
         ResumeApprovalCommand cmd = new ResumeApprovalCommand(service);
 
@@ -290,7 +290,7 @@ class ApprovalsCommandTest {
     void resumeMissingApprovalReturnsNonZero() {
         ApprovalResumeService service = new ApprovalResumeService(
             approvalRepository, runRepository, toolExecutionRepository,
-            new ToolRegistry(List.of()), java.time.Clock.systemUTC()
+            new ToolRegistry(List.of()), new com.tinyclaw.application.approval.ApprovalResumeLockRegistry(), java.time.Clock.systemUTC()
         );
         ResumeApprovalCommand cmd = new ResumeApprovalCommand(service);
 
@@ -330,7 +330,7 @@ class ApprovalsCommandTest {
 
         ToolRegistry registry = new ToolRegistry(List.of(shellTool), List.of(new DangerousCommandPolicy()));
         ApprovalResumeService service = new ApprovalResumeService(
-            approvalRepository, runRepository, toolExecutionRepository, registry, java.time.Clock.systemUTC()
+            approvalRepository, runRepository, toolExecutionRepository, registry, new com.tinyclaw.application.approval.ApprovalResumeLockRegistry(), java.time.Clock.systemUTC()
         );
         ResumeApprovalCommand cmd = new ResumeApprovalCommand(service);
 
@@ -342,5 +342,36 @@ class ApprovalsCommandTest {
         assertThat(output).contains("status: resumed");
         assertThat(output).contains("toolError: true");
         assertThat(output).contains("Dangerous command blocked");
+    }
+
+    @Test
+    void resumeSameApprovalTwiceReturnsTwo() {
+        seedRunAndApproval("run-resume-twice", "apr-resume-twice", ApprovalStatus.APPROVED);
+
+        AgentTool echoTool = new AgentTool() {
+            @Override public String name() { return "shell_command"; }
+            @Override public com.tinyclaw.domain.message.ToolDefinition definition() {
+                return new com.tinyclaw.domain.message.ToolDefinition("shell_command", "Test", "{}");
+            }
+            @Override public com.tinyclaw.domain.message.ToolResult execute(com.tinyclaw.domain.message.ToolCall call, com.tinyclaw.ports.tool.ToolExecutionContext context) {
+                return com.tinyclaw.domain.message.ToolResult.success(call.id(), "ok");
+            }
+        };
+        ToolRegistry registry = new ToolRegistry(List.of(echoTool));
+        ApprovalResumeService service = new ApprovalResumeService(
+            approvalRepository, runRepository, toolExecutionRepository, registry,
+            new com.tinyclaw.application.approval.ApprovalResumeLockRegistry(), java.time.Clock.systemUTC()
+        );
+        ResumeApprovalCommand cmd = new ResumeApprovalCommand(service);
+
+        int first = new CommandLine(cmd).execute("--approval-id", "apr-resume-twice");
+        assertThat(first).isZero();
+
+        out.reset();
+        int second = new CommandLine(cmd).execute("--approval-id", "apr-resume-twice");
+        restoreStreams();
+
+        assertThat(second).isEqualTo(2);
+        assertThat(out.toString()).contains("not approved").contains("RESUMED");
     }
 }

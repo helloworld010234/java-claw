@@ -123,4 +123,197 @@ class ApprovalRequestTest {
                 "apr-1", "run-1", "sess-1", "call-1", "write_file", null, now);
         assertThat(req.argumentsPreview()).isEmpty();
     }
+
+    @Test
+    void approvedCanBeMarkedResuming() {
+        Instant requested = Instant.parse("2026-06-10T00:00:00Z");
+        ApprovalRequest approved = ApprovalRequest.pending(
+                "apr-1", "run-1", "sess-1", "call-1", "write_file", "args", requested)
+                .approve("ok", requested.plusSeconds(1));
+        Instant resumingAt = requested.plusSeconds(2);
+
+        ApprovalRequest resuming = approved.markResuming("claiming for resume", resumingAt);
+
+        assertThat(resuming.status()).isEqualTo(ApprovalStatus.RESUMING);
+        assertThat(resuming.decisionReason()).isEqualTo("claiming for resume");
+        assertThat(resuming.decidedAt()).isEqualTo(resumingAt);
+    }
+
+    @Test
+    void resumingCanBeMarkedResumed() {
+        Instant requested = Instant.parse("2026-06-10T00:00:00Z");
+        ApprovalRequest resuming = ApprovalRequest.pending(
+                "apr-1", "run-1", "sess-1", "call-1", "write_file", "args", requested)
+                .approve("ok", requested.plusSeconds(1))
+                .markResuming("claiming for resume", requested.plusSeconds(2));
+        Instant resumedAt = requested.plusSeconds(3);
+
+        ApprovalRequest resumed = resuming.markResumed("resumed successfully", resumedAt);
+
+        assertThat(resumed.status()).isEqualTo(ApprovalStatus.RESUMED);
+        assertThat(resumed.decisionReason()).isEqualTo("resumed successfully");
+        assertThat(resumed.decidedAt()).isEqualTo(resumedAt);
+    }
+
+    @Test
+    void approvedCannotBeMarkedResumedDirectly() {
+        Instant requested = Instant.parse("2026-06-10T00:00:00Z");
+        ApprovalRequest approved = ApprovalRequest.pending(
+                "apr-1", "run-1", "sess-1", "call-1", "write_file", "args", requested)
+                .approve("ok", requested.plusSeconds(1));
+
+        assertThatThrownBy(() -> approved.markResumed("skip resuming", requested.plusSeconds(2)))
+                .isInstanceOf(TinyClawDomainException.class)
+                .hasMessageContaining("Cannot perform 'markResumed'");
+    }
+
+    @Test
+    void pendingCannotBeMarkedResuming() {
+        Instant requested = Instant.parse("2026-06-10T00:00:00Z");
+        ApprovalRequest pending = ApprovalRequest.pending(
+                "apr-1", "run-1", "sess-1", "call-1", "write_file", "args", requested);
+
+        assertThatThrownBy(() -> pending.markResuming("no", requested.plusSeconds(1)))
+                .isInstanceOf(TinyClawDomainException.class)
+                .hasMessageContaining("Cannot perform 'markResuming'");
+    }
+
+    @Test
+    void rejectedCannotBeMarkedResuming() {
+        Instant requested = Instant.parse("2026-06-10T00:00:00Z");
+        ApprovalRequest rejected = ApprovalRequest.pending(
+                "apr-1", "run-1", "sess-1", "call-1", "write_file", "args", requested)
+                .reject("no", requested.plusSeconds(1));
+
+        assertThatThrownBy(() -> rejected.markResuming("no", requested.plusSeconds(2)))
+                .isInstanceOf(TinyClawDomainException.class)
+                .hasMessageContaining("Cannot perform 'markResuming'");
+    }
+
+    @Test
+    void expiredCannotBeMarkedResuming() {
+        Instant requested = Instant.parse("2026-06-10T00:00:00Z");
+        ApprovalRequest expired = ApprovalRequest.pending(
+                "apr-1", "run-1", "sess-1", "call-1", "write_file", "args", requested)
+                .expire(requested.plusSeconds(1));
+
+        assertThatThrownBy(() -> expired.markResuming("no", requested.plusSeconds(2)))
+                .isInstanceOf(TinyClawDomainException.class)
+                .hasMessageContaining("Cannot perform 'markResuming'");
+    }
+
+    @Test
+    void resumedCannotBeMarkedResuming() {
+        Instant requested = Instant.parse("2026-06-10T00:00:00Z");
+        ApprovalRequest resumed = ApprovalRequest.pending(
+                "apr-1", "run-1", "sess-1", "call-1", "write_file", "args", requested)
+                .approve("ok", requested.plusSeconds(1))
+                .markResuming("claim", requested.plusSeconds(2))
+                .markResumed("done", requested.plusSeconds(3));
+
+        assertThatThrownBy(() -> resumed.markResuming("no", requested.plusSeconds(4)))
+                .isInstanceOf(TinyClawDomainException.class)
+                .hasMessageContaining("Cannot perform 'markResuming'");
+    }
+
+    @Test
+    void pendingCannotBeMarkedResumed() {
+        Instant requested = Instant.parse("2026-06-10T00:00:00Z");
+        ApprovalRequest pending = ApprovalRequest.pending(
+                "apr-1", "run-1", "sess-1", "call-1", "write_file", "args", requested);
+
+        assertThatThrownBy(() -> pending.markResumed("no", requested.plusSeconds(1)))
+                .isInstanceOf(TinyClawDomainException.class)
+                .hasMessageContaining("Cannot perform 'markResumed'");
+    }
+
+    @Test
+    void rejectedCannotBeMarkedResumed() {
+        Instant requested = Instant.parse("2026-06-10T00:00:00Z");
+        ApprovalRequest rejected = ApprovalRequest.pending(
+                "apr-1", "run-1", "sess-1", "call-1", "write_file", "args", requested)
+                .reject("no", requested.plusSeconds(1));
+
+        assertThatThrownBy(() -> rejected.markResumed("no", requested.plusSeconds(2)))
+                .isInstanceOf(TinyClawDomainException.class)
+                .hasMessageContaining("Cannot perform 'markResumed'");
+    }
+
+    @Test
+    void expiredCannotBeMarkedResumed() {
+        Instant requested = Instant.parse("2026-06-10T00:00:00Z");
+        ApprovalRequest expired = ApprovalRequest.pending(
+                "apr-1", "run-1", "sess-1", "call-1", "write_file", "args", requested)
+                .expire(requested.plusSeconds(1));
+
+        assertThatThrownBy(() -> expired.markResumed("no", requested.plusSeconds(2)))
+                .isInstanceOf(TinyClawDomainException.class)
+                .hasMessageContaining("Cannot perform 'markResumed'");
+    }
+
+    @Test
+    void resumedCannotBeMarkedResumedAgain() {
+        Instant requested = Instant.parse("2026-06-10T00:00:00Z");
+        ApprovalRequest resumed = ApprovalRequest.pending(
+                "apr-1", "run-1", "sess-1", "call-1", "write_file", "args", requested)
+                .approve("ok", requested.plusSeconds(1))
+                .markResuming("claim", requested.plusSeconds(2))
+                .markResumed("first", requested.plusSeconds(3));
+
+        assertThatThrownBy(() -> resumed.markResumed("second", requested.plusSeconds(4)))
+                .isInstanceOf(TinyClawDomainException.class)
+                .hasMessageContaining("Cannot perform 'markResumed'");
+    }
+
+    @Test
+    void markResumingRejectsBlankReason() {
+        Instant requested = Instant.parse("2026-06-10T00:00:00Z");
+        ApprovalRequest approved = ApprovalRequest.pending(
+                "apr-1", "run-1", "sess-1", "call-1", "write_file", "args", requested)
+                .approve("ok", requested.plusSeconds(1));
+
+        assertThatThrownBy(() -> approved.markResuming("   ", requested.plusSeconds(2)))
+                .isInstanceOf(TinyClawDomainException.class)
+                .hasMessageContaining("reason");
+    }
+
+    @Test
+    void markResumingRejectsDecidedAtBeforeRequestedAt() {
+        Instant requested = Instant.parse("2026-06-10T01:00:00Z");
+        ApprovalRequest approved = ApprovalRequest.pending(
+                "apr-1", "run-1", "sess-1", "call-1", "write_file", "args", requested)
+                .approve("ok", requested.plusSeconds(1));
+        Instant before = Instant.parse("2026-06-10T00:00:00Z");
+
+        assertThatThrownBy(() -> approved.markResuming("ok", before))
+                .isInstanceOf(TinyClawDomainException.class)
+                .hasMessageContaining("decision time must not be before requestedAt");
+    }
+
+    @Test
+    void markResumedRejectsBlankReason() {
+        Instant requested = Instant.parse("2026-06-10T00:00:00Z");
+        ApprovalRequest resuming = ApprovalRequest.pending(
+                "apr-1", "run-1", "sess-1", "call-1", "write_file", "args", requested)
+                .approve("ok", requested.plusSeconds(1))
+                .markResuming("claim", requested.plusSeconds(2));
+
+        assertThatThrownBy(() -> resuming.markResumed("   ", requested.plusSeconds(3)))
+                .isInstanceOf(TinyClawDomainException.class)
+                .hasMessageContaining("reason");
+    }
+
+    @Test
+    void markResumedRejectsDecidedAtBeforeRequestedAt() {
+        Instant requested = Instant.parse("2026-06-10T01:00:00Z");
+        ApprovalRequest resuming = ApprovalRequest.pending(
+                "apr-1", "run-1", "sess-1", "call-1", "write_file", "args", requested)
+                .approve("ok", requested.plusSeconds(1))
+                .markResuming("claim", requested.plusSeconds(2));
+        Instant before = Instant.parse("2026-06-10T00:00:00Z");
+
+        assertThatThrownBy(() -> resuming.markResumed("ok", before))
+                .isInstanceOf(TinyClawDomainException.class)
+                .hasMessageContaining("decision time must not be before requestedAt");
+    }
 }
