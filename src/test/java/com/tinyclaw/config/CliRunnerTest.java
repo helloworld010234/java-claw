@@ -190,6 +190,45 @@ class CliRunnerTest {
     }
 
     @Test
+    void withTinyClawModelEnabledEqualsFormShouldFilterFromPicocli(@TempDir Path tempDir) {
+        cliRunner.run(
+            "run", "--prompt", "Hello",
+            "--dir", tempDir.toString(),
+            "--session", "smoke",
+            "--spring.profiles.active=test",
+            "--spring.main.web-application-type=none",
+            "--tiny-claw.model.enabled=true"
+        );
+        assertThat(cliRunner.getExitCode()).isZero();
+    }
+
+    @Test
+    void withTinyClawModelEnabledSpaceFormShouldFilterFromPicocli(@TempDir Path tempDir) {
+        cliRunner.run(
+            "run", "--prompt", "Hello",
+            "--dir", tempDir.toString(),
+            "--session", "smoke",
+            "--spring.profiles.active", "test",
+            "--spring.main.web-application-type", "none",
+            "--tiny-claw.model.enabled", "true"
+        );
+        assertThat(cliRunner.getExitCode()).isZero();
+    }
+
+    @Test
+    void withTinyClawApiKeyEqualsFormShouldFilterFromPicocli(@TempDir Path tempDir) {
+        cliRunner.run(
+            "run", "--prompt", "Hello",
+            "--dir", tempDir.toString(),
+            "--session", "smoke",
+            "--spring.profiles.active=test",
+            "--spring.main.web-application-type=none",
+            "--tiny-claw.model.api-key=sk-test"
+        );
+        assertThat(cliRunner.getExitCode()).isZero();
+    }
+
+    @Test
     void withMixedConfigPrefixesShouldFilterAll(@TempDir Path tempDir) {
         cliRunner.run(
             "run", "--prompt", "Hello",
@@ -199,7 +238,8 @@ class CliRunnerTest {
             "--server.port=0",
             "--management.endpoints.web.exposure.include=*",
             "--logging.level.org.springframework=debug",
-            "--tinyclaw.approval.required-tools=shell_command"
+            "--tinyclaw.approval.required-tools=shell_command",
+            "--tiny-claw.model.enabled=true"
         );
         assertThat(cliRunner.getExitCode()).isZero();
     }

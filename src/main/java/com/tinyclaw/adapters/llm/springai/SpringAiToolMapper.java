@@ -54,7 +54,7 @@ public final class SpringAiToolMapper {
             OBJECT_MAPPER.readTree(jsonSchema);
             return jsonSchema;
         } catch (Exception e) {
-            return DEFAULT_SCHEMA;
+            throw new IllegalArgumentException("Invalid JSON schema for tool: " + jsonSchema, e);
         }
     }
 }

@@ -23,6 +23,38 @@ class BootstrapArgsTest {
     }
 
     @Test
+    void tinyClawSpaceSeparatedBecomesEqualsForm() {
+        String[] result = BootstrapArgs.normalize(
+            new String[]{"--tiny-claw.model.enabled", "true"}
+        );
+        assertThat(result).containsExactly("--tiny-claw.model.enabled=true");
+    }
+
+    @Test
+    void tinyClawEqualsFormUnchanged() {
+        String[] result = BootstrapArgs.normalize(
+            new String[]{"--tiny-claw.model.enabled=true"}
+        );
+        assertThat(result).containsExactly("--tiny-claw.model.enabled=true");
+    }
+
+    @Test
+    void tinyClawApiKeySpaceSeparatedBecomesEqualsForm() {
+        String[] result = BootstrapArgs.normalize(
+            new String[]{"--tiny-claw.model.api-key", "sk-test"}
+        );
+        assertThat(result).containsExactly("--tiny-claw.model.api-key=sk-test");
+    }
+
+    @Test
+    void tinyClawApiKeyEqualsFormUnchanged() {
+        String[] result = BootstrapArgs.normalize(
+            new String[]{"--tiny-claw.model.api-key=sk-test"}
+        );
+        assertThat(result).containsExactly("--tiny-claw.model.api-key=sk-test");
+    }
+
+    @Test
     void springSpaceSeparatedBecomesEqualsForm() {
         String[] result = BootstrapArgs.normalize(
             new String[]{"--spring.profiles.active", "test"}
@@ -107,6 +139,26 @@ class BootstrapArgsTest {
             "--spring.profiles.active=test",
             "--dir", "D:\\work",
             "--server.port=0"
+        );
+    }
+
+    @Test
+    void mixedTinyClawAndCliArgs() {
+        String[] result = BootstrapArgs.normalize(
+            new String[]{
+                "run",
+                "--tiny-claw.model.enabled", "true",
+                "--prompt", "Hello",
+                "--engine", "real",
+                "--spring.profiles.active", "test"
+            }
+        );
+        assertThat(result).containsExactly(
+            "run",
+            "--tiny-claw.model.enabled=true",
+            "--prompt", "Hello",
+            "--engine", "real",
+            "--spring.profiles.active=test"
         );
     }
 

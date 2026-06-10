@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class SpringAiToolMapperTest {
 
@@ -37,13 +38,11 @@ class SpringAiToolMapperTest {
     }
 
     @Test
-    void fallsBackToObjectSchemaForInvalidJson() {
+    void throwsForInvalidJsonSchema() {
         ToolDefinition tool = new ToolDefinition("bad", "desc", "not-json");
 
-        List<OpenAiApi.FunctionTool> result = SpringAiToolMapper.toOpenAiTools(List.of(tool));
-
-        @SuppressWarnings("unchecked")
-        Map<String, Object> params = (Map<String, Object>) result.get(0).getFunction().getParameters();
-        assertThat(params).containsEntry("type", "object");
+        assertThatThrownBy(() -> SpringAiToolMapper.toOpenAiTools(List.of(tool)))
+            .isInstanceOf(IllegalArgumentException.class)
+            .hasMessageContaining("Invalid JSON schema");
     }
 }

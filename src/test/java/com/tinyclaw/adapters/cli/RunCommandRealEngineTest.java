@@ -117,11 +117,14 @@ class RunCommandRealEngineTest {
         TinyClawModelProperties properties = new TinyClawModelProperties();
         properties.setEnabled(true);
         properties.setApiKey("sk-test");
+        properties.setName("test-model");
         properties.setPricing(new TinyClawModelProperties.Pricing());
         properties.getPricing().setInputPricePer1M(0.15);
         properties.getPricing().setOutputPricePer1M(0.15);
 
-        when(agentEngine.run(any(), any(), any(), any(), any())).thenReturn(
+        AgentEngine namedEngine = mock(AgentEngine.class);
+        when(agentEngine.withModelName("test-model")).thenReturn(namedEngine);
+        when(namedEngine.run(any(), any(), any(), any(), any())).thenReturn(
             new AgentRunResult(true, "Done", 2, null, new Usage(100, 50))
         );
         when(sessionService.getWorkingMemory(any())).thenReturn(List.of());

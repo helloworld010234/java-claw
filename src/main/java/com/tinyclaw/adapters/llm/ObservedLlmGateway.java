@@ -61,7 +61,7 @@ public class ObservedLlmGateway implements LlmGateway {
     }
 
     private void recordMetrics(LlmRequest request, LlmResponse response, long latencyMs, boolean success) {
-        String model = request.model() != null ? request.model() : "unknown";
+        String model = request.model() != null && !request.model().isBlank() ? request.model() : "unknown";
         Tags tags = Tags.of("model", model, "status", success ? "success" : "failure");
 
         try {

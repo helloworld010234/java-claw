@@ -44,6 +44,7 @@ public class AgentEngine {
     private final Clock clock;
     private final AgentContextBuilder agentContextBuilder;
     private final ToolFailureRecoveryAdvisor recoveryAdvisor;
+    private final String modelName;
 
     public AgentEngine(LlmGateway llmGateway,
                        ToolRegistry toolRegistry,
@@ -83,6 +84,19 @@ public class AgentEngine {
                        Clock clock,
                        AgentContextBuilder agentContextBuilder,
                        ToolFailureRecoveryAdvisor recoveryAdvisor) {
+        this(llmGateway, toolRegistry, promptComposer, reporter, sessionService, clock,
+             agentContextBuilder, recoveryAdvisor, null);
+    }
+
+    public AgentEngine(LlmGateway llmGateway,
+                       ToolRegistry toolRegistry,
+                       PromptComposer promptComposer,
+                       Reporter reporter,
+                       SessionService sessionService,
+                       Clock clock,
+                       AgentContextBuilder agentContextBuilder,
+                       ToolFailureRecoveryAdvisor recoveryAdvisor,
+                       String modelName) {
         this.llmGateway = DomainGuards.requireNonNull(llmGateway, "llmGateway");
         this.toolRegistry = DomainGuards.requireNonNull(toolRegistry, "toolRegistry");
         this.promptComposer = DomainGuards.requireNonNull(promptComposer, "promptComposer");
@@ -91,6 +105,7 @@ public class AgentEngine {
         this.clock = DomainGuards.requireNonNull(clock, "clock");
         this.agentContextBuilder = DomainGuards.requireNonNull(agentContextBuilder, "agentContextBuilder");
         this.recoveryAdvisor = DomainGuards.requireNonNull(recoveryAdvisor, "recoveryAdvisor");
+        this.modelName = modelName != null && !modelName.isBlank() ? modelName : "";
     }
 
     /**
@@ -99,7 +114,16 @@ public class AgentEngine {
      */
     public AgentEngine withLlmGateway(LlmGateway llmGateway) {
         return new AgentEngine(llmGateway, toolRegistry, promptComposer, reporter, sessionService, clock,
-            agentContextBuilder, recoveryAdvisor);
+            agentContextBuilder, recoveryAdvisor, modelName);
+    }
+
+    /**
+     * Returns a new AgentEngine instance with the given model name,
+     * reusing all other dependencies.
+     */
+    public AgentEngine withModelName(String modelName) {
+        return new AgentEngine(llmGateway, toolRegistry, promptComposer, reporter, sessionService, clock,
+            agentContextBuilder, recoveryAdvisor, modelName);
     }
 
     /**
@@ -154,7 +178,7 @@ public class AgentEngine {
 
             List<ToolDefinition> availableTools = toolRegistry.availableTools();
             LlmRequest request = new LlmRequest(
-                "default-model",
+                modelName,
                 messages,
                 availableTools,
                 LlmRequestOptions.defaults()

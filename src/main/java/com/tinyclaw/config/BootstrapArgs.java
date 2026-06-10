@@ -5,17 +5,17 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * 启动参数规范化工具。
+ * Argument normalizer executed before Spring Boot starts.
  *
- * <p>在 Spring Boot 启动前执行，将空格分隔的配置参数（如 {@code --key value}）
- * 转换为 Spring Boot 可识别的等号形式（{@code --key=value}）。</p>
+ * <p>Converts space-separated config pairs (e.g. {@code --key value})
+ * into the equals form ({@code --key=value}) that Spring Boot recognizes.</p>
  *
- * <p>只处理已知的 Boot/应用配置前缀，不触碰 Picocli 业务参数。</p>
+ * <p>Only known configuration prefixes are touched; Picocli business args are left unchanged.</p>
  */
 public final class BootstrapArgs {
 
     private static final Set<String> CONFIG_PREFIXES = Set.of(
-        "--spring.", "--server.", "--management.", "--logging.", "--tinyclaw."
+        "--spring.", "--server.", "--management.", "--logging.", "--tinyclaw.", "--tiny-claw."
     );
 
     private BootstrapArgs() {
@@ -23,10 +23,10 @@ public final class BootstrapArgs {
     }
 
     /**
-     * 将空格分隔的配置参数规范化为等号形式。
+     * Normalizes space-separated config arguments into equals form.
      *
-     * @param args 原始命令行参数，可能为 {@code null}
-     * @return 规范化后的参数数组；{@code null} 输入返回空数组
+     * @param args raw command-line arguments, may be {@code null}
+     * @return normalized array; {@code null} yields an empty array
      */
     public static String[] normalize(String[] args) {
         if (args == null) {

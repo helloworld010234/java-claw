@@ -15,6 +15,7 @@ import com.tinyclaw.ports.llm.LlmException;
 import com.tinyclaw.ports.reporter.Reporter;
 import com.tinyclaw.ports.session.SessionService;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -78,6 +79,7 @@ public class EngineConfiguration {
 
     @Bean
     @ConditionalOnMissingBean(LlmGateway.class)
+    @ConditionalOnProperty(prefix = "tiny-claw.model", name = "enabled", havingValue = "false", matchIfMissing = true)
     LlmGateway defaultLlmGateway() {
         return request -> {
             throw new LlmException(

@@ -38,13 +38,13 @@ import java.util.UUID;
 import java.util.concurrent.Callable;
 
 /**
- * CLI run 命令：执行单次 Agent 任务。
+ * CLI {@code run} command: executes a single agent task.
  *
- * <p>支持三种模式（按优先级）：</p>
+ * <p>Three modes are supported (in priority order):</p>
  * <ul>
- *   <li>有 plan file：读取 JSON 计划，按顺序调用工具。</li>
- *   <li>有 --engine fake：走 AgentEngine + FakeLlmGateway 的 ReAct 循环。</li>
- *   <li>默认：校验参数、打印任务信息并退出（兼容旧行为）。</li>
+ *   <li>Plan file present: read the JSON plan and invoke tools in order.</li>
+ *   <li>{@code --engine fake}: run the AgentEngine + FakeLlmGateway ReAct loop.</li>
+ *   <li>Default: validate args, print task info and exit (legacy behaviour).</li>
  * </ul>
  */
 @Component
@@ -379,7 +379,8 @@ public class RunCommand implements Callable<Integer> {
         }
 
         ToolExecutionContext context = new ToolExecutionContext(workspace).withRun(run.id(), session.id());
-        AgentRunResult result = agentEngine.run(run, session, prompt, context, toolExecutionRepository);
+        AgentEngine realEngine = agentEngine.withModelName(modelProperties.getName());
+        AgentRunResult result = realEngine.run(run, session, prompt, context, toolExecutionRepository);
 
         // Persist only the messages that were added during this run
         if (messageRepository != null) {

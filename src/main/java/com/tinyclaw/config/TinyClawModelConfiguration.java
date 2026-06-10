@@ -11,7 +11,6 @@ import org.springframework.ai.openai.OpenAiChatModel;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.ai.openai.api.OpenAiApi;
 import org.springframework.beans.factory.ObjectProvider;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -22,6 +21,9 @@ import org.springframework.retry.support.RetryTemplate;
  *
  * <p>Only active when {@code tiny-claw.model.enabled=true}. Creates the production
  * {@link LlmGateway} bean wrapped with usage/cost observation.</p>
+ *
+ * <p>If the API key is missing, the gateway fail-fasts on the first call with a clear
+ * {@link com.tinyclaw.ports.llm.LlmException} instead of making a real network request.</p>
  */
 @Configuration
 public class TinyClawModelConfiguration {
@@ -32,16 +34,21 @@ public class TinyClawModelConfiguration {
             ObjectProvider<ChatModel> chatModelProvider,
             TinyClawModelProperties properties,
             MeterRegistry meterRegistry) {
-        ChatModel chatModel = chatModelProvider.getIfAvailable(() -> createChatModel(properties));
+        String apiKey = properties.getApiKey();
+        if (apiKey == null || apiKey.isBlank()) {
+            LlmGateway failFastGateway = request -> {
+                throw new com.tinyclaw.ports.llm.LlmException(
+                    "Real LLM engine requires an API key. "
+                        + "Set tiny-claw.model.api-key or LLM_API_KEY environment variable."
+                );
+            };
+            return new ObservedLlmGateway(failFastGateway, meterRegistry, properties);
+        }
+
+        ChatModel chatModel = chatModelProvider.stream().findFirst()
+            .orElseGet(() -> createChatModel(properties));
         LlmGateway springAiGateway = new SpringAiLlmGateway(chatModel, properties);
         return new ObservedLlmGateway(springAiGateway, meterRegistry, properties);
-    }
-
-    @Bean
-    @ConditionalOnProperty(prefix = "tiny-claw.model", name = "enabled", havingValue = "true")
-    @ConditionalOnMissingBean(ChatModel.class)
-    public ChatModel tinyClawChatModel(TinyClawModelProperties properties) {
-        return createChatModel(properties);
     }
 
     private ChatModel createChatModel(TinyClawModelProperties properties) {

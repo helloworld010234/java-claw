@@ -6,9 +6,9 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
 /**
- * Java-Claw 应用入口。
+ * Java-Claw application entry point.
  *
- * <p>基于 Spring Boot 3.x 提供 CLI（Picocli）与 Web（Feishu Webhook）双模运行能力。</p>
+ * <p>Supports both CLI (Picocli) and Web modes on Spring Boot 3.x.</p>
  */
 @SpringBootApplication
 public class TinyClawApplication {

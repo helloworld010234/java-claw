@@ -11,19 +11,19 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * CLI 启动器：将命令行参数委托给 Picocli 执行。
+ * CLI launcher that delegates filtered arguments to Picocli.
  *
- * <p>作为 {@link CommandLineRunner} 在 Spring Boot 启动后运行；
- * 同时实现 {@link ExitCodeGenerator} 以支持进程退出码传递。</p>
+ * <p>Runs after Spring Boot starts as a {@link CommandLineRunner}
+ * and implements {@link ExitCodeGenerator} for proper process exit codes.</p>
  *
- * <p>会自动过滤掉 Spring Boot 属性参数，只将真正的 CLI 参数传递给 Picocli。</p>
+ * <p>Spring Boot property arguments are automatically stripped so only real CLI args reach Picocli.</p>
  */
 @Component
 public class CliRunner implements CommandLineRunner, ExitCodeGenerator {
 
     private static final Set<String> KNOWN_COMMANDS = Set.of("run", "tool", "runs", "approvals");
     private static final Set<String> CONFIG_PROPERTY_PREFIXES = Set.of(
-        "--spring.", "--server.", "--management.", "--logging.", "--tinyclaw."
+        "--spring.", "--server.", "--management.", "--logging.", "--tinyclaw.", "--tiny-claw."
     );
 
     private final RootCommand rootCommand;
@@ -50,7 +50,7 @@ public class CliRunner implements CommandLineRunner, ExitCodeGenerator {
     }
 
     /**
-     * 仅供测试使用：重置 exitCode。
+     * Resets exit code for testing only.
      */
     void resetForTest() {
         this.exitCode = 0;

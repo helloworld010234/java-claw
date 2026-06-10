@@ -17,6 +17,7 @@ import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.chat.prompt.Prompt;
+import org.springframework.ai.openai.OpenAiChatOptions;
 
 import java.util.List;
 
@@ -24,6 +25,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class SpringAiLlmGatewayTest {
@@ -123,5 +125,47 @@ class SpringAiLlmGatewayTest {
         assertThatThrownBy(() -> gateway.generate(request))
             .isInstanceOf(LlmException.class)
             .hasMessageContaining("already wrapped");
+    }
+
+    @Test
+    void usesConfiguredModelNameWhenRequestModelIsBlank() {
+        when(chatModel.call(any(Prompt.class))).thenReturn(
+            new ChatResponse(List.of(new Generation(AssistantMessage.builder().content("Hello").build())))
+        );
+
+        TinyClawModelProperties props = new TinyClawModelProperties();
+        props.setName("custom-model-from-config");
+        SpringAiLlmGateway configuredGateway = new SpringAiLlmGateway(chatModel, props);
+
+        LlmRequest request = new LlmRequest("", List.of(Message.user("hi")), List.of(), LlmRequestOptions.defaults());
+        configuredGateway.generate(request);
+
+        org.mockito.ArgumentCaptor<Prompt> promptCaptor = org.mockito.ArgumentCaptor.forClass(Prompt.class);
+        verify(chatModel).call(promptCaptor.capture());
+        Prompt capturedPrompt = promptCaptor.getValue();
+        assertThat(capturedPrompt.getOptions()).isInstanceOf(OpenAiChatOptions.class);
+        OpenAiChatOptions options = (OpenAiChatOptions) capturedPrompt.getOptions();
+        assertThat(options.getModel()).isEqualTo("custom-model-from-config");
+    }
+
+    @Test
+    void usesRequestModelNameWhenProvided() {
+        when(chatModel.call(any(Prompt.class))).thenReturn(
+            new ChatResponse(List.of(new Generation(AssistantMessage.builder().content("Hello").build())))
+        );
+
+        TinyClawModelProperties props = new TinyClawModelProperties();
+        props.setName("config-model");
+        SpringAiLlmGateway configuredGateway = new SpringAiLlmGateway(chatModel, props);
+
+        LlmRequest request = new LlmRequest("override-model", List.of(Message.user("hi")), List.of(), LlmRequestOptions.defaults());
+        configuredGateway.generate(request);
+
+        org.mockito.ArgumentCaptor<Prompt> promptCaptor = org.mockito.ArgumentCaptor.forClass(Prompt.class);
+        verify(chatModel).call(promptCaptor.capture());
+        Prompt capturedPrompt = promptCaptor.getValue();
+        assertThat(capturedPrompt.getOptions()).isInstanceOf(OpenAiChatOptions.class);
+        OpenAiChatOptions options = (OpenAiChatOptions) capturedPrompt.getOptions();
+        assertThat(options.getModel()).isEqualTo("override-model");
     }
 }

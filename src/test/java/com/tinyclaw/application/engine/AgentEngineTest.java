@@ -284,6 +284,35 @@ class AgentEngineTest {
     }
 
     @Test
+    void withModelNameReplacesModelNameOnly() {
+        FakeLlmGateway fakeLlm = new FakeLlmGateway(List.of(
+            new LlmResponse("ok", List.of(), null)
+        ));
+        AgentEngine engine = new AgentEngine(fakeLlm, toolRegistry, promptComposer, reporter, sessionService, clock);
+        AgentEngine renamed = engine.withModelName("custom-model");
+
+        renamed.run(startRun(1), createSession(), "test", new ToolExecutionContext(workspace));
+
+        List<LlmRequest> requests = fakeLlm.recordedRequests();
+        assertThat(requests).hasSize(1);
+        assertThat(requests.get(0).model()).isEqualTo("custom-model");
+    }
+
+    @Test
+    void modelNameDefaultsToEmptyString() {
+        FakeLlmGateway fakeLlm = new FakeLlmGateway(List.of(
+            new LlmResponse("ok", List.of(), null)
+        ));
+        AgentEngine engine = new AgentEngine(fakeLlm, toolRegistry, promptComposer, reporter, sessionService, clock);
+
+        engine.run(startRun(1), createSession(), "test", new ToolExecutionContext(workspace));
+
+        List<LlmRequest> requests = fakeLlm.recordedRequests();
+        assertThat(requests).hasSize(1);
+        assertThat(requests.get(0).model()).isEqualTo("");
+    }
+
+    @Test
     void toolFailureCausesFinalResultToBeFailed() {
         FakeLlmGateway fakeLlm = new FakeLlmGateway(List.of(
             new LlmResponse("", List.of(
