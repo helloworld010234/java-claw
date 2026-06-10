@@ -104,6 +104,14 @@ public class FakeLlmGateway implements LlmGateway {
                 new LlmResponse("Could not read", List.of(), null)
             ));
         }
+        if (lower.contains("command") || lower.contains("shell")) {
+            return new FakeLlmGateway(List.of(
+                new LlmResponse("", List.of(
+                    ToolCall.of("t1", "shell_command", "{\"command\":\"echo hello-from-shell\"}")
+                ), null),
+                new LlmResponse("Done", List.of(), null)
+            ));
+        }
         return new FakeLlmGateway(List.of(
             new LlmResponse("Fake response to: " + prompt, List.of(), null)
         ));

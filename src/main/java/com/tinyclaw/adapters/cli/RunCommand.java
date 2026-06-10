@@ -29,9 +29,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.Instant;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.Callable;
 
@@ -211,12 +209,8 @@ public class RunCommand implements Callable<Integer> {
             runRepository.saveRunStarted(run, "agent", prompt);
         }
 
-        // Remember which messages exist before engine runs
-        List<Message> messagesBefore = sessionService.getWorkingMemory(session.id());
-        Set<String> messageSignaturesBefore = new HashSet<>();
-        for (Message m : messagesBefore) {
-            messageSignaturesBefore.add(messageSignature(m));
-        }
+        // Remember how many messages exist before engine runs
+        int messagesBeforeCount = sessionService.getWorkingMemory(session.id()).size();
 
         ToolExecutionContext context = new ToolExecutionContext(workspace);
         FakeLlmGateway fakeLlm = FakeLlmGateway.forPrompt(prompt);
@@ -226,14 +220,12 @@ public class RunCommand implements Callable<Integer> {
         // Persist any new messages produced by the engine
         if (messageRepository != null) {
             List<Message> messagesAfter = sessionService.getWorkingMemory(session.id());
-            for (Message m : messagesAfter) {
-                if (m.role() == Role.SYSTEM) {
-                    continue;
-                }
-                String sig = messageSignature(m);
-                if (!messageSignaturesBefore.contains(sig)) {
-                    messageRepository.append(runId, session.id(), m);
-                }
+            List<Message> newMessages = messagesAfter.stream()
+                .skip(messagesBeforeCount)
+                .filter(m -> m.role() != Role.SYSTEM)
+                .toList();
+            for (Message m : newMessages) {
+                messageRepository.append(runId, session.id(), m);
             }
         }
 
@@ -253,10 +245,6 @@ public class RunCommand implements Callable<Integer> {
 
     private String newRunId(String sessionId) {
         return "run-" + sessionId + "-" + UUID.randomUUID().toString().substring(0, 8);
-    }
-
-    private String messageSignature(Message message) {
-        return message.role().name() + "|" + message.content() + "|" + message.toolCallId();
     }
 
     private Path resolveWorkspace(String dir) {

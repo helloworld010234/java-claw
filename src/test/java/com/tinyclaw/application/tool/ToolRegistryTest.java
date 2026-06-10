@@ -6,6 +6,8 @@ import com.tinyclaw.domain.message.ToolDefinition;
 import com.tinyclaw.domain.message.ToolResult;
 import com.tinyclaw.ports.tool.AgentTool;
 import com.tinyclaw.ports.tool.ToolExecutionContext;
+import com.tinyclaw.ports.tool.ToolExecutionDecision;
+import com.tinyclaw.ports.tool.ToolExecutionPolicy;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Path;
@@ -73,6 +75,59 @@ class ToolRegistryTest {
         assertThat(result.output()).contains("Tool execution failed", "broken");
     }
 
+    @Test
+    void policyAllowsExecution() {
+        AgentTool tool = tool("read_file", ToolResult.success("call-1", "ok"));
+        ToolExecutionPolicy allowPolicy = call -> ToolExecutionDecision.allow();
+        ToolRegistry registry = new ToolRegistry(List.of(tool), List.of(allowPolicy));
+
+        ToolResult result = registry.execute(ToolCall.of("call-1", "read_file", "{}"), CONTEXT);
+
+        assertThat(result.error()).isFalse();
+        assertThat(result.output()).isEqualTo("ok");
+    }
+
+    @Test
+    void policyRejectsExecutionWithoutCallingTool() {
+        SpyTool spyTool = spyTool("read_file", ToolResult.success("call-1", "should-not-run"));
+        ToolExecutionPolicy denyPolicy = call -> ToolExecutionDecision.deny("Blocked by test policy");
+        ToolRegistry registry = new ToolRegistry(List.of(spyTool), List.of(denyPolicy));
+
+        ToolResult result = registry.execute(ToolCall.of("call-1", "read_file", "{}"), CONTEXT);
+
+        assertThat(result.error()).isTrue();
+        assertThat(result.output()).isEqualTo("Blocked by test policy");
+        assertThat(spyTool.executeWasCalled).isFalse();
+    }
+
+    @Test
+    void multiplePoliciesEvaluatedInOrder() {
+        AgentTool tool = tool("read_file", ToolResult.success("call-1", "ok"));
+        ToolExecutionPolicy allowPolicy = call -> ToolExecutionDecision.allow();
+        ToolExecutionPolicy denyPolicy = call -> ToolExecutionDecision.deny("Second policy blocks");
+        ToolRegistry registry = new ToolRegistry(List.of(tool), List.of(allowPolicy, denyPolicy));
+
+        ToolResult result = registry.execute(ToolCall.of("call-1", "read_file", "{}"), CONTEXT);
+
+        assertThat(result.error()).isTrue();
+        assertThat(result.output()).isEqualTo("Second policy blocks");
+    }
+
+    @Test
+    void firstRejectionWinsAndSkipsRemainingPolicies() {
+        AgentTool tool = tool("read_file", ToolResult.success("call-1", "ok"));
+        ToolExecutionPolicy denyPolicy = call -> ToolExecutionDecision.deny("First blocks");
+        ToolExecutionPolicy secondPolicy = call -> {
+            throw new AssertionError("Should not be called");
+        };
+        ToolRegistry registry = new ToolRegistry(List.of(tool), List.of(denyPolicy, secondPolicy));
+
+        ToolResult result = registry.execute(ToolCall.of("call-1", "read_file", "{}"), CONTEXT);
+
+        assertThat(result.error()).isTrue();
+        assertThat(result.output()).isEqualTo("First blocks");
+    }
+
     private AgentTool tool(String name, ToolResult result) {
         return new AgentTool() {
             @Override
@@ -90,5 +145,36 @@ class ToolRegistryTest {
                 return result;
             }
         };
+    }
+
+    private SpyTool spyTool(String name, ToolResult result) {
+        return new SpyTool(name, result);
+    }
+
+    private static class SpyTool implements AgentTool {
+        private final String name;
+        private final ToolResult result;
+        boolean executeWasCalled = false;
+
+        SpyTool(String name, ToolResult result) {
+            this.name = name;
+            this.result = result;
+        }
+
+        @Override
+        public String name() {
+            return name;
+        }
+
+        @Override
+        public ToolDefinition definition() {
+            return new ToolDefinition(name, "Spy tool", "{}");
+        }
+
+        @Override
+        public ToolResult execute(ToolCall call, ToolExecutionContext context) {
+            executeWasCalled = true;
+            return result;
+        }
     }
 }

@@ -6,9 +6,12 @@ import com.tinyclaw.domain.message.ToolCall;
 import com.tinyclaw.domain.message.ToolResult;
 import com.tinyclaw.ports.tool.AgentTool;
 import com.tinyclaw.ports.tool.ToolExecutionContext;
+import com.tinyclaw.ports.tool.ToolExecutionDecision;
+import com.tinyclaw.ports.tool.ToolExecutionPolicy;
 
 import com.tinyclaw.domain.message.ToolDefinition;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -20,15 +23,22 @@ import java.util.stream.Collectors;
 public class ToolRegistry {
 
     private final Map<String, AgentTool> tools;
+    private final List<ToolExecutionPolicy> policies;
 
     public ToolRegistry(List<AgentTool> tools) {
+        this(tools, List.of());
+    }
+
+    public ToolRegistry(List<AgentTool> tools, List<ToolExecutionPolicy> policies) {
         DomainGuards.requireNonNull(tools, "tools");
+        DomainGuards.requireNonNull(policies, "policies");
         this.tools = tools.stream()
             .collect(Collectors.toUnmodifiableMap(
                 this::toolName,
                 tool -> tool,
                 this::rejectDuplicate
             ));
+        this.policies = List.copyOf(policies);
     }
 
     public Optional<AgentTool> find(String name) {
@@ -51,6 +61,14 @@ public class ToolRegistry {
         AgentTool tool = tools.get(call.name());
         if (tool == null) {
             return ToolResult.failure(call.id(), "Unknown tool: " + call.name());
+        }
+
+        // Evaluate policies in order
+        for (ToolExecutionPolicy policy : policies) {
+            ToolExecutionDecision decision = policy.decide(call);
+            if (!decision.allowed()) {
+                return ToolResult.failure(call.id(), decision.reason());
+            }
         }
 
         try {

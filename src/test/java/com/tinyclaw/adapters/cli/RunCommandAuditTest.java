@@ -7,6 +7,7 @@ import com.tinyclaw.adapters.persistence.JdbcRunRepository;
 import com.tinyclaw.adapters.persistence.JdbcToolExecutionRepository;
 import com.tinyclaw.adapters.reporter.NoOpReporter;
 import com.tinyclaw.adapters.session.InMemorySessionService;
+import com.tinyclaw.adapters.tools.command.ShellCommandTool;
 import com.tinyclaw.adapters.tools.filesystem.EditFileTool;
 import com.tinyclaw.adapters.tools.filesystem.ReadFileTool;
 import com.tinyclaw.adapters.tools.filesystem.WriteFileTool;
@@ -16,6 +17,8 @@ import com.tinyclaw.application.persistence.AgentMessageDto;
 import com.tinyclaw.application.persistence.AgentRunSummary;
 import com.tinyclaw.application.persistence.ToolExecutionRecord;
 import com.tinyclaw.application.run.ScriptedRunExecutor;
+import com.tinyclaw.application.tool.AllowAllPolicy;
+import com.tinyclaw.application.tool.DangerousCommandPolicy;
 import com.tinyclaw.application.tool.ToolRegistry;
 import com.tinyclaw.domain.message.Role;
 import com.tinyclaw.domain.run.AgentRunStatus;
@@ -71,11 +74,15 @@ class RunCommandAuditTest {
 
     @BeforeEach
     void setUp() {
-        ToolRegistry registry = new ToolRegistry(List.of(
-            new ReadFileTool(),
-            new WriteFileTool(),
-            new EditFileTool()
-        ));
+        ToolRegistry registry = new ToolRegistry(
+            List.of(
+                new ReadFileTool(),
+                new WriteFileTool(),
+                new EditFileTool(),
+                new ShellCommandTool()
+            ),
+            List.of(new AllowAllPolicy(), new DangerousCommandPolicy())
+        );
         LlmGateway dummyLlm = request -> new LlmResponse("", List.of(), null);
         InMemorySessionService sessionService = new InMemorySessionService();
         AgentEngine agentEngine = new AgentEngine(
@@ -282,6 +289,67 @@ class RunCommandAuditTest {
         assertThat(runRepository.findById(runId2)).isPresent();
     }
 
+    @Test
+    void sameSessionSamePromptTwicePersistsBothRuns() {
+        String session = "audit-same-prompt";
+
+        int exitCode1 = commandLine().execute(
+            "--prompt", "hello",
+            "--dir", tempDir.toString(),
+            "--session", session,
+            "--engine", "fake"
+        );
+        restoreStreams();
+        String runId1 = extractRunId(out.toString());
+        assertThat(exitCode1).isZero();
+
+        List<AgentMessageDto> messages1 = messageRepository.findByRunId(runId1);
+        assertThat(messages1).hasSize(2);
+
+        setUp();
+        int exitCode2 = commandLine().execute(
+            "--prompt", "hello",
+            "--dir", tempDir.toString(),
+            "--session", session,
+            "--engine", "fake"
+        );
+        restoreStreams();
+        String runId2 = extractRunId(out.toString());
+        assertThat(exitCode2).isZero();
+
+        List<AgentMessageDto> messages2 = messageRepository.findByRunId(runId2);
+        assertThat(messages2).hasSize(2);
+
+        assertThat(runId1).isNotEqualTo(runId2);
+    }
+
+    @Test
+    void engineFakeShellCommandSucceedsAndPersistsMessages() {
+        int exitCode = commandLine().execute(
+            "--prompt", "run command",
+            "--dir", tempDir.toString(),
+            "--session", "audit-fake-shell",
+            "--engine", "fake"
+        );
+        restoreStreams();
+
+        assertThat(exitCode).isZero();
+        String runId = extractRunId(out.toString());
+        assertThat(runId).isNotNull();
+
+        AgentRunSummary run = runRepository.findById(runId).orElseThrow();
+        assertThat(run.status()).isEqualTo(AgentRunStatus.COMPLETED);
+        assertThat(run.turnCount()).isEqualTo(2);
+
+        List<AgentMessageDto> messages = messageRepository.findByRunId(runId);
+        assertThat(messages).hasSize(4);
+        assertThat(messages.get(0).role()).isEqualTo(Role.USER);
+        assertThat(messages.get(1).role()).isEqualTo(Role.ASSISTANT);
+        assertThat(messages.get(2).role()).isEqualTo(Role.USER);
+        assertThat(messages.get(2).toolCallId()).isNotNull();
+        assertThat(messages.get(3).role()).isEqualTo(Role.ASSISTANT);
+    }
+
     // --- plan-file mode audit tests ---
 
     @Test
@@ -354,5 +422,75 @@ class RunCommandAuditTest {
         assertThat(executions).hasSize(1);
         assertThat(executions.get(0).stepId()).isEqualTo("fail-step");
         assertThat(executions.get(0).isError()).isTrue();
+    }
+
+    @Test
+    void planFileShellCommandPersistsExecution() throws IOException {
+        String command = System.getProperty("os.name").toLowerCase().contains("windows")
+            ? "Write-Output 'plan-shell'"
+            : "echo plan-shell";
+        String plan = """
+            {
+              "stopOnError": true,
+              "steps": [
+                {"id": "shell-step", "tool": "shell_command", "args": {"command": "%s"}}
+              ]
+            }
+            """.formatted(command);
+        Path planFile = tempDir.resolve("shell-plan.json");
+        Files.writeString(planFile, plan);
+
+        int exitCode = commandLine().execute(
+            "--prompt", "plan shell",
+            "--dir", tempDir.toString(),
+            "--session", "audit-plan-shell",
+            "--plan-file", planFile.toString()
+        );
+        restoreStreams();
+
+        assertThat(exitCode).isZero();
+        String runId = extractRunId(out.toString());
+        assertThat(runId).isNotNull();
+
+        List<ToolExecutionRecord> executions = toolExecutionRepository.findByRunId(runId);
+        assertThat(executions).hasSize(1);
+        assertThat(executions.get(0).stepId()).isEqualTo("shell-step");
+        assertThat(executions.get(0).toolName()).isEqualTo("shell_command");
+        assertThat(executions.get(0).isError()).isFalse();
+    }
+
+    @Test
+    void planFileDangerousShellCommandIsBlockedByPolicy() throws IOException {
+        String plan = """
+            {
+              "stopOnError": true,
+              "steps": [
+                {"id": "danger-step", "tool": "shell_command", "args": {"command": "rm -rf /"}}
+              ]
+            }
+            """;
+        Path planFile = tempDir.resolve("danger-plan.json");
+        Files.writeString(planFile, plan);
+
+        int exitCode = commandLine().execute(
+            "--prompt", "plan danger",
+            "--dir", tempDir.toString(),
+            "--session", "audit-plan-danger",
+            "--plan-file", planFile.toString()
+        );
+        restoreStreams();
+
+        assertThat(exitCode).isEqualTo(1);
+        String runId = extractRunId(out.toString());
+        assertThat(runId).isNotNull();
+
+        AgentRunSummary run = runRepository.findById(runId).orElseThrow();
+        assertThat(run.status()).isEqualTo(AgentRunStatus.FAILED);
+
+        List<ToolExecutionRecord> executions = toolExecutionRepository.findByRunId(runId);
+        assertThat(executions).hasSize(1);
+        assertThat(executions.get(0).stepId()).isEqualTo("danger-step");
+        assertThat(executions.get(0).isError()).isTrue();
+        assertThat(executions.get(0).output()).contains("Dangerous command blocked");
     }
 }
