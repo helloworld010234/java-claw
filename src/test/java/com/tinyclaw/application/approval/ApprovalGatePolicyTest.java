@@ -115,6 +115,126 @@ class ApprovalGatePolicyTest {
         assertThat(req.argumentsPreview()).isEqualTo("{\"command\":\"echo hi\"}");
     }
 
+    @Test
+    void approvedApprovalIdAllowsMatchingApproval() {
+        ApprovalGatePolicy policy = new ApprovalGatePolicy(repository, List.of("shell_command"), clock);
+        ApprovalRequest pending = ApprovalRequest.pending(
+            "apr-1", "run-1", "sess-1", "tc-1", "shell_command", "args", clock.instant()
+        );
+        repository.save(pending);
+        repository.update(pending.approve("ok", clock.instant()));
+
+        ToolExecutionContext ctx = CONTEXT.withApprovedApproval("apr-1");
+        ToolExecutionDecision decision = policy.decide(
+            ToolCall.of("tc-1", "shell_command", "{\"command\":\"echo hi\"}"), ctx
+        );
+
+        assertThat(decision.allowed()).isTrue();
+    }
+
+    @Test
+    void approvedApprovalIdDeniesWhenApprovalNotFound() {
+        ApprovalGatePolicy policy = new ApprovalGatePolicy(repository, List.of("shell_command"), clock);
+
+        ToolExecutionContext ctx = CONTEXT.withApprovedApproval("missing");
+        ToolExecutionDecision decision = policy.decide(
+            ToolCall.of("tc-1", "shell_command", "{\"command\":\"echo hi\"}"), ctx
+        );
+
+        assertThat(decision.allowed()).isFalse();
+        assertThat(decision.reason()).contains("not found");
+    }
+
+    @Test
+    void approvedApprovalIdDeniesWhenApprovalStatusIsPending() {
+        ApprovalGatePolicy policy = new ApprovalGatePolicy(repository, List.of("shell_command"), clock);
+        ApprovalRequest pending = ApprovalRequest.pending(
+            "apr-pending", "run-1", "sess-1", "tc-1", "shell_command", "args", clock.instant()
+        );
+        repository.save(pending);
+
+        ToolExecutionContext ctx = CONTEXT.withApprovedApproval("apr-pending");
+        ToolExecutionDecision decision = policy.decide(
+            ToolCall.of("tc-1", "shell_command", "{\"command\":\"echo hi\"}"), ctx
+        );
+
+        assertThat(decision.allowed()).isFalse();
+        assertThat(decision.reason()).contains("not approved");
+    }
+
+    @Test
+    void approvedApprovalIdDeniesWhenApprovalStatusIsRejected() {
+        ApprovalGatePolicy policy = new ApprovalGatePolicy(repository, List.of("shell_command"), clock);
+        ApprovalRequest pending = ApprovalRequest.pending(
+            "apr-rejected", "run-1", "sess-1", "tc-1", "shell_command", "args", clock.instant()
+        );
+        repository.save(pending);
+        repository.update(pending.reject("no", clock.instant()));
+
+        ToolExecutionContext ctx = CONTEXT.withApprovedApproval("apr-rejected");
+        ToolExecutionDecision decision = policy.decide(
+            ToolCall.of("tc-1", "shell_command", "{\"command\":\"echo hi\"}"), ctx
+        );
+
+        assertThat(decision.allowed()).isFalse();
+        assertThat(decision.reason()).contains("not approved");
+    }
+
+    @Test
+    void approvedApprovalIdDeniesWhenToolCallIdDoesNotMatch() {
+        ApprovalGatePolicy policy = new ApprovalGatePolicy(repository, List.of("shell_command"), clock);
+        ApprovalRequest pending = ApprovalRequest.pending(
+            "apr-1", "run-1", "sess-1", "tc-1", "shell_command", "args", clock.instant()
+        );
+        repository.save(pending);
+        repository.update(pending.approve("ok", clock.instant()));
+
+        ToolExecutionContext ctx = CONTEXT.withApprovedApproval("apr-1");
+        ToolExecutionDecision decision = policy.decide(
+            ToolCall.of("tc-other", "shell_command", "{\"command\":\"echo hi\"}"), ctx
+        );
+
+        assertThat(decision.allowed()).isFalse();
+        assertThat(decision.reason()).contains("does not match");
+    }
+
+    @Test
+    void approvedApprovalIdDeniesWhenToolNameDoesNotMatch() {
+        ApprovalGatePolicy policy = new ApprovalGatePolicy(repository, List.of("shell_command", "write_file"), clock);
+        ApprovalRequest pending = ApprovalRequest.pending(
+            "apr-1", "run-1", "sess-1", "tc-1", "shell_command", "args", clock.instant()
+        );
+        repository.save(pending);
+        repository.update(pending.approve("ok", clock.instant()));
+
+        ToolExecutionContext ctx = CONTEXT.withApprovedApproval("apr-1");
+        ToolExecutionDecision decision = policy.decide(
+            ToolCall.of("tc-1", "write_file", "{\"path\":\"x\"}"), ctx
+        );
+
+        assertThat(decision.allowed()).isFalse();
+        assertThat(decision.reason()).contains("does not match");
+    }
+
+    @Test
+    void approvedApprovalIdDeniesWhenRunIdDoesNotMatch() {
+        ApprovalGatePolicy policy = new ApprovalGatePolicy(repository, List.of("shell_command"), clock);
+        ApprovalRequest pending = ApprovalRequest.pending(
+            "apr-1", "run-1", "sess-1", "tc-1", "shell_command", "args", clock.instant()
+        );
+        repository.save(pending);
+        repository.update(pending.approve("ok", clock.instant()));
+
+        ToolExecutionContext otherRun = new ToolExecutionContext(Path.of("."), "run-other", "sess-1")
+            .withApprovedApproval("apr-1");
+        ToolExecutionDecision decision = policy.decide(
+            ToolCall.of("tc-1", "shell_command", "{\"command\":\"echo hi\"}"), otherRun
+        );
+
+        assertThat(decision.allowed()).isFalse();
+        assertThat(decision.reason()).contains("does not match");
+    }
+
     private String extractApprovalId(String reason) {
         return reason.substring(reason.lastIndexOf(':') + 1).trim();
     }

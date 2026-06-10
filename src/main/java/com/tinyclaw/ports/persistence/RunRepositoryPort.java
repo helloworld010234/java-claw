@@ -18,6 +18,13 @@ public interface RunRepositoryPort {
     void saveSession(Session session);
 
     /**
+     * Find a session by its id.
+     *
+     * @return empty if not found
+     */
+    Optional<Session> findSessionById(String sessionId);
+
+    /**
      * Save a newly started run with mode and prompt.
      */
     void saveRunStarted(AgentRun run, String mode, String prompt);

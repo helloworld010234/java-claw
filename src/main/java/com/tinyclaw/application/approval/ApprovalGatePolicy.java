@@ -19,6 +19,9 @@ import java.util.UUID;
  * <p>When a tool call matches {@code required-tools}:</p>
  * <ul>
  *   <li>If run/session context is missing, denies the call.</li>
+ *   <li>If the context carries an {@code approvedApprovalId} and the approval
+ *       exists with status APPROVED and matches runId, toolCallId and toolName,
+ *       the call is allowed.</li>
  *   <li>If a pending approval already exists for the same run + toolCallId, reuses it.</li>
  *   <li>Otherwise creates a new pending approval request and requires approval.</li>
  * </ul>
@@ -52,6 +55,10 @@ public class ApprovalGatePolicy implements ToolExecutionPolicy {
             );
         }
 
+        if (context.approvedApprovalId() != null && !context.approvedApprovalId().isBlank()) {
+            return evaluateApprovedApproval(call, context);
+        }
+
         Optional<ApprovalRequest> existing = approvalRepository.findByRunIdAndToolCallId(
             context.runId(), call.id()
         );
@@ -76,5 +83,31 @@ public class ApprovalGatePolicy implements ToolExecutionPolicy {
         return ToolExecutionDecision.requireApproval(
             "Approval required: " + request.id()
         );
+    }
+
+    private ToolExecutionDecision evaluateApprovedApproval(ToolCall call, ToolExecutionContext context) {
+        Optional<ApprovalRequest> maybeApproval = approvalRepository.findById(context.approvedApprovalId());
+        if (maybeApproval.isEmpty()) {
+            return ToolExecutionDecision.deny(
+                "Approved approval not found: " + context.approvedApprovalId()
+            );
+        }
+
+        ApprovalRequest approval = maybeApproval.get();
+        if (approval.status() != ApprovalStatus.APPROVED) {
+            return ToolExecutionDecision.deny(
+                "Approval is not approved: " + approval.status()
+            );
+        }
+
+        if (!approval.runId().equals(context.runId())
+            || !approval.toolCallId().equals(call.id())
+            || !approval.toolName().equals(call.name())) {
+            return ToolExecutionDecision.deny(
+                "Approval does not match run, toolCallId or toolName"
+            );
+        }
+
+        return ToolExecutionDecision.allow();
     }
 }

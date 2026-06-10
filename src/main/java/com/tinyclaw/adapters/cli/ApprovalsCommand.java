@@ -11,7 +11,7 @@ import picocli.CommandLine;
     name = "approvals",
     description = "Query and manage approval requests",
     mixinStandardHelpOptions = true,
-    subcommands = {ListApprovalsCommand.class, ShowApprovalCommand.class, ApproveCommand.class, RejectApprovalCommand.class}
+    subcommands = {ListApprovalsCommand.class, ShowApprovalCommand.class, ApproveCommand.class, RejectApprovalCommand.class, ResumeApprovalCommand.class}
 )
 public class ApprovalsCommand implements Runnable {
 

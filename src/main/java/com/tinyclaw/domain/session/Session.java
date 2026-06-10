@@ -58,6 +58,16 @@ public final class Session {
     }
 
     /**
+     * 从持久化记录重建会话。仅用于从 repository 加载完整状态。
+     */
+    public static Session reconstruct(String id, String workDir, SessionStatus status, Instant createdAt, Instant updatedAt) {
+        DomainGuards.requireNonNull(status, "status");
+        DomainGuards.requireNonNull(createdAt, "createdAt");
+        DomainGuards.requireNonNull(updatedAt, "updatedAt");
+        return new Session(id, workDir, status, createdAt, updatedAt);
+    }
+
+    /**
      * 归档会话，返回新的 ARCHIVED 实例。
      *
      * @param now 归档时间，不能早于 createdAt

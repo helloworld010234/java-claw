@@ -13,6 +13,7 @@ import com.tinyclaw.adapters.tools.filesystem.EditFileTool;
 import com.tinyclaw.adapters.tools.filesystem.ReadFileTool;
 import com.tinyclaw.adapters.tools.filesystem.WriteFileTool;
 import com.tinyclaw.application.approval.ApprovalGatePolicy;
+import com.tinyclaw.application.approval.ApprovalResumeService;
 import com.tinyclaw.application.engine.AgentEngine;
 import com.tinyclaw.application.engine.PromptComposer;
 import com.tinyclaw.application.persistence.AgentMessageDto;
@@ -839,5 +840,101 @@ class RunCommandAuditTest {
 
         assertThat(exitCode).isEqualTo(2);
         assertThat(err.toString()).contains("Session").contains("36");
+    }
+
+    @Test
+    void planFileWithApprovalCanBeResumedAfterApprove() throws IOException {
+        String command = System.getProperty("os.name").toLowerCase().contains("windows")
+            ? "Write-Output 'resumed-ok'"
+            : "echo resumed-ok";
+        String plan = """
+            {
+              "stopOnError": true,
+              "steps": [
+                {"id": "shell-step", "tool": "shell_command", "args": {"command": "%s"}}
+              ]
+            }
+            """.formatted(command);
+        Path planFile = tempDir.resolve("resume-plan.json");
+        Files.writeString(planFile, plan);
+
+        ToolRegistry registry = new ToolRegistry(
+            List.of(
+                new ReadFileTool(),
+                new WriteFileTool(),
+                new EditFileTool(),
+                new ShellCommandTool()
+            ),
+            List.of(
+                new AllowAllPolicy(),
+                new DangerousCommandPolicy(),
+                new ApprovalGatePolicy(approvalRepository, List.of("shell_command"), java.time.Clock.systemUTC())
+            )
+        );
+        InMemorySessionService sessionService = new InMemorySessionService();
+        AgentEngine agentEngine = new AgentEngine(
+            request -> new LlmResponse("", List.of(), null),
+            registry, new PromptComposer(), new NoOpReporter(), sessionService
+        );
+        RunCommand runCommand = new RunCommand(
+            new ScriptedRunExecutor(registry, new ObjectMapper()),
+            agentEngine,
+            new ObjectMapper(),
+            sessionService,
+            runRepository,
+            messageRepository,
+            toolExecutionRepository
+        );
+
+        int runExit = new CommandLine(runCommand).execute(
+            "--prompt", "plan shell",
+            "--dir", tempDir.toString(),
+            "--session", "audit-plan-resume",
+            "--plan-file", planFile.toString()
+        );
+        restoreStreams();
+
+        assertThat(runExit).isEqualTo(1);
+        String runId = extractRunId(out.toString());
+        assertThat(runId).isNotNull();
+
+        AgentRunSummary runBefore = runRepository.findById(runId).orElseThrow();
+        assertThat(runBefore.status()).isEqualTo(AgentRunStatus.FAILED);
+
+        List<ToolExecutionRecord> executionsBefore = toolExecutionRepository.findByRunId(runId);
+        assertThat(executionsBefore).hasSize(1);
+        assertThat(executionsBefore.get(0).isError()).isTrue();
+        assertThat(executionsBefore.get(0).output()).contains("Approval required");
+        String approvalId = extractApprovalId(executionsBefore.get(0).output());
+        assertThat(approvalId).isNotBlank();
+
+        var pending = approvalRepository.findById(approvalId).orElseThrow();
+        assertThat(pending.status().name()).isEqualTo("PENDING");
+        approvalRepository.update(pending.approve("operator confirmed", java.time.Instant.now()));
+
+        ApprovalResumeService resumeService = new ApprovalResumeService(
+            approvalRepository, runRepository, toolExecutionRepository, registry, java.time.Clock.systemUTC()
+        );
+        ResumeApprovalCommand resumeCommand = new ResumeApprovalCommand(resumeService);
+        out.reset();
+        err.reset();
+        System.setOut(new PrintStream(out));
+        System.setErr(new PrintStream(err));
+        int resumeExit = new CommandLine(resumeCommand).execute("--approval-id", approvalId);
+        restoreStreams();
+
+        assertThat(resumeExit).isZero();
+        assertThat(out.toString()).contains("status: resumed");
+        assertThat(out.toString()).contains("toolError: false");
+        assertThat(out.toString()).contains("runStatus: COMPLETED");
+
+        AgentRunSummary runAfter = runRepository.findById(runId).orElseThrow();
+        assertThat(runAfter.status()).isEqualTo(AgentRunStatus.COMPLETED);
+
+        List<ToolExecutionRecord> executionsAfter = toolExecutionRepository.findByRunId(runId);
+        assertThat(executionsAfter).hasSize(2);
+        assertThat(executionsAfter.get(0).isError()).isTrue();
+        assertThat(executionsAfter.get(0).output()).contains("Approval required");
+        assertThat(executionsAfter.get(1).isError()).isFalse();
     }
 }

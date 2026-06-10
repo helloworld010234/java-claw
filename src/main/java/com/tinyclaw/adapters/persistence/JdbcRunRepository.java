@@ -4,6 +4,7 @@ import com.tinyclaw.application.persistence.AgentRunSummary;
 import com.tinyclaw.domain.run.AgentRun;
 import com.tinyclaw.domain.run.AgentRunStatus;
 import com.tinyclaw.domain.session.Session;
+import com.tinyclaw.domain.session.SessionStatus;
 import com.tinyclaw.ports.persistence.RunRepositoryPort;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -51,6 +52,31 @@ public class JdbcRunRepository implements RunRepositoryPort {
                 Timestamp.from(session.createdAt()),
                 Timestamp.from(session.updatedAt())
             );
+        }
+    }
+
+    @Override
+    public Optional<Session> findSessionById(String sessionId) {
+        String sql = """
+            SELECT id, workspace_path, status, created_at, updated_at
+            FROM agent_sessions
+            WHERE id = ?
+            """;
+        try {
+            Session session = jdbcTemplate.queryForObject(sql, (rs, rowNum) -> {
+                String statusStr = rs.getString("status");
+                SessionStatus status = SessionStatus.valueOf(statusStr.toUpperCase());
+                return Session.reconstruct(
+                    rs.getString("id"),
+                    rs.getString("workspace_path"),
+                    status,
+                    rs.getTimestamp("created_at").toInstant(),
+                    rs.getTimestamp("updated_at").toInstant()
+                );
+            }, sessionId);
+            return Optional.ofNullable(session);
+        } catch (EmptyResultDataAccessException e) {
+            return Optional.empty();
         }
     }
 
