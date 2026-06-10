@@ -499,4 +499,142 @@ class RunCommandAuditTest {
         assertThat(executions.get(0).isError()).isTrue();
         assertThat(executions.get(0).output()).contains("Dangerous command blocked");
     }
+
+    // --- long session / runId boundary tests ---
+
+    @Test
+    void engineFakeWithMaxLengthSessionIdSucceeds() {
+        String longSession = "a".repeat(36);
+
+        int exitCode = commandLine().execute(
+            "--prompt", "hello",
+            "--dir", tempDir.toString(),
+            "--session", longSession,
+            "--engine", "fake"
+        );
+        restoreStreams();
+
+        assertThat(exitCode).isZero();
+        String runId = extractRunId(out.toString());
+        assertThat(runId).isNotNull();
+        assertThat(runId.length()).isLessThanOrEqualTo(36);
+        assertThat(runId).doesNotContain(longSession);
+
+        AgentRunSummary run = runRepository.findById(runId).orElseThrow();
+        assertThat(run.status()).isEqualTo(AgentRunStatus.COMPLETED);
+        assertThat(run.sessionId()).isEqualTo(longSession);
+
+        List<AgentMessageDto> messages = messageRepository.findByRunId(runId);
+        assertThat(messages).hasSize(2);
+    }
+
+    @Test
+    void planFileWithMaxLengthSessionIdSucceeds() throws IOException {
+        String longSession = "p".repeat(36);
+        String plan = """
+            {
+              "stopOnError": true,
+              "steps": [
+                {"id": "read-step", "tool": "read_file", "args": {"path": "notes.txt"}}
+              ]
+            }
+            """;
+        Path planFile = tempDir.resolve("long-session-plan.json");
+        Files.writeString(planFile, plan);
+        Files.writeString(tempDir.resolve("notes.txt"), "data");
+
+        int exitCode = commandLine().execute(
+            "--prompt", "plan long session",
+            "--dir", tempDir.toString(),
+            "--session", longSession,
+            "--plan-file", planFile.toString()
+        );
+        restoreStreams();
+
+        assertThat(exitCode).isZero();
+        String runId = extractRunId(out.toString());
+        assertThat(runId).isNotNull();
+        assertThat(runId.length()).isLessThanOrEqualTo(36);
+        assertThat(runId).doesNotContain(longSession);
+
+        AgentRunSummary run = runRepository.findById(runId).orElseThrow();
+        assertThat(run.status()).isEqualTo(AgentRunStatus.COMPLETED);
+        assertThat(run.sessionId()).isEqualTo(longSession);
+    }
+
+    @Test
+    void sameMaxLengthSessionCanRunTwiceWithDifferentRunIds() {
+        String longSession = "s".repeat(36);
+
+        int exitCode1 = commandLine().execute(
+            "--prompt", "hello one",
+            "--dir", tempDir.toString(),
+            "--session", longSession,
+            "--engine", "fake"
+        );
+        restoreStreams();
+        String runId1 = extractRunId(out.toString());
+        assertThat(exitCode1).isZero();
+
+        setUp();
+        int exitCode2 = commandLine().execute(
+            "--prompt", "hello two",
+            "--dir", tempDir.toString(),
+            "--session", longSession,
+            "--engine", "fake"
+        );
+        restoreStreams();
+        String runId2 = extractRunId(out.toString());
+        assertThat(exitCode2).isZero();
+
+        assertThat(runId1).isNotEqualTo(runId2);
+        assertThat(runId1.length()).isLessThanOrEqualTo(36);
+        assertThat(runId2.length()).isLessThanOrEqualTo(36);
+
+        AgentRunSummary run1 = runRepository.findById(runId1).orElseThrow();
+        AgentRunSummary run2 = runRepository.findById(runId2).orElseThrow();
+        assertThat(run1.sessionId()).isEqualTo(longSession);
+        assertThat(run2.sessionId()).isEqualTo(longSession);
+    }
+
+    @Test
+    void engineFakeWithTooLongSessionIdReturnsTwo() {
+        String tooLong = "x".repeat(37);
+        int exitCode = commandLine().execute(
+            "--prompt", "hello",
+            "--dir", tempDir.toString(),
+            "--session", tooLong,
+            "--engine", "fake"
+        );
+        restoreStreams();
+
+        assertThat(exitCode).isEqualTo(2);
+        assertThat(err.toString()).contains("Session").contains("36");
+    }
+
+    @Test
+    void planFileWithTooLongSessionIdReturnsTwo() throws IOException {
+        String plan = """
+            {
+              "stopOnError": true,
+              "steps": [
+                {"id": "w1", "tool": "write_file", "args": {"path": "plan.txt", "content": "from-plan", "overwrite": true}}
+              ]
+            }
+            """;
+        Path planFile = tempDir.resolve("plan.json");
+        Files.writeString(planFile, plan);
+
+        String tooLong = "y".repeat(40);
+        int exitCode = commandLine().execute(
+            "--prompt", "plan danger",
+            "--dir", tempDir.toString(),
+            "--session", tooLong,
+            "--plan-file", planFile.toString()
+        );
+        restoreStreams();
+
+        assertThat(exitCode).isEqualTo(2);
+        assertThat(err.toString()).contains("Session").contains("36");
+    }
 }

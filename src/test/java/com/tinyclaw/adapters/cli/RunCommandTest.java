@@ -427,4 +427,60 @@ class RunCommandTest {
         assertThat(err.toString()).contains("Invalid engine");
         assertThat(tempDir.resolve("plan.txt")).doesNotExist();
     }
+
+    @Test
+    void sessionIdAtMaxLength36Succeeds() {
+        String session36 = "a".repeat(36);
+        int exitCode = commandLine().execute(
+            "--prompt", "hello",
+            "--dir", tempDir.toString(),
+            "--session", session36,
+            "--engine", "fake"
+        );
+        restoreStreams();
+
+        assertThat(exitCode).isZero();
+    }
+
+    @Test
+    void sessionIdExceeding36ReturnsTwo() {
+        String session37 = "b".repeat(37);
+        int exitCode = commandLine().execute(
+            "--prompt", "hello",
+            "--dir", tempDir.toString(),
+            "--session", session37,
+            "--engine", "fake"
+        );
+        restoreStreams();
+
+        assertThat(exitCode).isEqualTo(2);
+        assertThat(err.toString()).contains("Session").contains("36");
+    }
+
+    @Test
+    void planFileWithLongSessionIdExceeding36ReturnsTwo() throws IOException {
+        String plan = """
+            {
+              "stopOnError": true,
+              "steps": [
+                {"id": "w1", "tool": "write_file", "args": {"path": "plan.txt", "content": "from-plan", "overwrite": true}}
+              ]
+            }
+            """;
+        Path planFile = tempDir.resolve("plan.json");
+        Files.writeString(planFile, plan);
+
+        String longSession = "x".repeat(40);
+        int exitCode = commandLine().execute(
+            "--prompt", "hello",
+            "--dir", tempDir.toString(),
+            "--session", longSession,
+            "--plan-file", planFile.toString()
+        );
+        restoreStreams();
+
+        assertThat(exitCode).isEqualTo(2);
+        assertThat(err.toString()).contains("Session").contains("36");
+        assertThat(tempDir.resolve("plan.txt")).doesNotExist();
+    }
 }

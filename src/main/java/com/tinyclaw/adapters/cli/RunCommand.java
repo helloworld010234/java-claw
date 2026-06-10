@@ -109,9 +109,17 @@ public class RunCommand implements Callable<Integer> {
 
     @Override
     public Integer call() {
-        String effectiveSessionId = sessionId != null && !sessionId.isBlank()
-            ? sessionId
-            : UUID.randomUUID().toString();
+        String effectiveSessionId;
+        if (sessionId != null && !sessionId.isBlank()) {
+            String trimmed = sessionId.trim();
+            if (trimmed.length() > 36) {
+                System.err.println("Session ID must not exceed 36 characters, got " + trimmed.length());
+                return 2;
+            }
+            effectiveSessionId = trimmed;
+        } else {
+            effectiveSessionId = UUID.randomUUID().toString();
+        }
 
         Path workspace;
         try {
@@ -168,7 +176,7 @@ public class RunCommand implements Callable<Integer> {
             return 2;
         }
 
-        String runId = newRunId(effectiveSessionId);
+        String runId = newRunId();
         Session session = Session.create(effectiveSessionId, workspace.toAbsolutePath().toString(), Instant.now());
         AgentRun run = AgentRun.start(runId, effectiveSessionId, 5, Instant.now());
 
@@ -200,7 +208,7 @@ public class RunCommand implements Callable<Integer> {
     }
 
     private Integer runAgentEngine(String effectiveSessionId, Path workspace) {
-        String runId = newRunId(effectiveSessionId);
+        String runId = newRunId();
         Session session = Session.create(effectiveSessionId, workspace.toAbsolutePath().toString(), Instant.now());
         AgentRun run = AgentRun.start(runId, effectiveSessionId, 5, Instant.now());
 
@@ -243,8 +251,8 @@ public class RunCommand implements Callable<Integer> {
         return result.success() ? 0 : 1;
     }
 
-    private String newRunId(String sessionId) {
-        return "run-" + sessionId + "-" + UUID.randomUUID().toString().substring(0, 8);
+    private String newRunId() {
+        return UUID.randomUUID().toString();
     }
 
     private Path resolveWorkspace(String dir) {
