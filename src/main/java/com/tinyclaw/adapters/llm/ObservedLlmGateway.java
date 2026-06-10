@@ -1,24 +1,28 @@
 package com.tinyclaw.adapters.llm;
 
+import com.tinyclaw.application.persistence.UsageRecord;
 import com.tinyclaw.config.TinyClawModelProperties;
 import com.tinyclaw.domain.message.Usage;
 import com.tinyclaw.ports.llm.LlmException;
 import com.tinyclaw.ports.llm.LlmGateway;
 import com.tinyclaw.ports.llm.LlmRequest;
 import com.tinyclaw.ports.llm.LlmResponse;
+import com.tinyclaw.ports.persistence.UsageRepositoryPort;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Tags;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.time.Duration;
 import java.time.Instant;
+import java.util.UUID;
 
 /**
  * Decorator around an {@link LlmGateway} that records usage, latency, and estimated cost metrics.
  *
  * <p>Delegates the actual LLM call and then publishes Micrometer metrics. If the delegate throws,
- * a failure metric is recorded and the exception is re-thrown wrapped in {@link LlmException}.</p>
+ * a failure metric is recorded and the exception is re-thrown.</p>
+ *
+ * <p>Optionally persists usage records via {@link UsageRepositoryPort} when enabled.</p>
  */
 public class ObservedLlmGateway implements LlmGateway {
 
@@ -27,8 +31,16 @@ public class ObservedLlmGateway implements LlmGateway {
     private final LlmGateway delegate;
     private final MeterRegistry meterRegistry;
     private final TinyClawModelProperties properties;
+    private final UsageRepositoryPort usageRepository;
 
     public ObservedLlmGateway(LlmGateway delegate, MeterRegistry meterRegistry, TinyClawModelProperties properties) {
+        this(delegate, meterRegistry, properties, null);
+    }
+
+    public ObservedLlmGateway(LlmGateway delegate,
+                              MeterRegistry meterRegistry,
+                              TinyClawModelProperties properties,
+                              UsageRepositoryPort usageRepository) {
         if (delegate == null) {
             throw new IllegalArgumentException("delegate must not be null");
         }
@@ -38,6 +50,7 @@ public class ObservedLlmGateway implements LlmGateway {
         this.delegate = delegate;
         this.meterRegistry = meterRegistry;
         this.properties = properties != null ? properties : new TinyClawModelProperties();
+        this.usageRepository = usageRepository;
     }
 
     @Override
@@ -55,8 +68,11 @@ public class ObservedLlmGateway implements LlmGateway {
         } catch (Exception e) {
             throw new LlmException("LLM call failed: " + e.getMessage(), e);
         } finally {
-            long latencyMs = Duration.between(start, Instant.now()).toMillis();
+            long latencyMs = java.time.Duration.between(start, Instant.now()).toMillis();
             recordMetrics(request, response, latencyMs, success);
+            if (usageRepository != null && properties.isUsageCostSummaryEnabled()) {
+                persistUsage(request, response, success, start);
+            }
         }
     }
 
@@ -80,6 +96,29 @@ public class ObservedLlmGateway implements LlmGateway {
             }
         } catch (Exception metricEx) {
             log.warn("Failed to record LLM metrics: {}", metricEx.getMessage());
+        }
+    }
+
+    private void persistUsage(LlmRequest request, LlmResponse response, boolean success, Instant startedAt) {
+        try {
+            Usage usage = response != null ? response.usage() : null;
+            if (usage == null) {
+                return;
+            }
+            double cost = estimateCost(usage);
+            UsageRecord record = new UsageRecord(
+                UUID.randomUUID().toString(), // placeholder runId; real runId should flow from context in future
+                UUID.randomUUID().toString(), // placeholder sessionId
+                request.model() != null && !request.model().isBlank() ? request.model() : properties.getName(),
+                usage.promptTokens(),
+                usage.completionTokens(),
+                cost > 0 ? cost : null,
+                success,
+                startedAt
+            );
+            usageRepository.save(record);
+        } catch (Exception ex) {
+            log.warn("Failed to persist usage record: {}", ex.getMessage());
         }
     }
 

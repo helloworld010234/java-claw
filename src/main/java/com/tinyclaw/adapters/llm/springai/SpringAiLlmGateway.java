@@ -1,5 +1,6 @@
 package com.tinyclaw.adapters.llm.springai;
 
+import com.tinyclaw.adapters.llm.LlmErrorClassifier;
 import com.tinyclaw.config.TinyClawModelProperties;
 import com.tinyclaw.domain.message.Message;
 import com.tinyclaw.domain.message.ToolCall;
@@ -16,7 +17,6 @@ import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.openai.OpenAiChatOptions;
-import org.springframework.ai.openai.api.OpenAiApi;
 
 import java.util.List;
 
@@ -35,7 +35,7 @@ public class SpringAiLlmGateway implements LlmGateway {
             throw new IllegalArgumentException("chatModel must not be null");
         }
         this.chatModel = chatModel;
-        this.defaultModel = properties != null && properties.getName() != null ? properties.getName() : "default";
+        this.defaultModel = properties != null && properties.getName() != null ? properties.getName() : "";
     }
 
     @Override
@@ -59,7 +59,7 @@ public class SpringAiLlmGateway implements LlmGateway {
         } catch (LlmException e) {
             throw e;
         } catch (Exception e) {
-            throw new LlmException("Spring AI LLM call failed: " + e.getMessage(), e);
+            throw LlmErrorClassifier.classify(e);
         }
     }
 

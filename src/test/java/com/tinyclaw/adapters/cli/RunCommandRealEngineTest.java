@@ -148,4 +148,57 @@ class RunCommandRealEngineTest {
             System.setOut(originalOut);
         }
     }
+
+    @Test
+    void realEngineWithDeepseekV4FlashModelName() {
+        TinyClawModelProperties properties = new TinyClawModelProperties();
+        properties.setEnabled(true);
+        properties.setApiKey("sk-test");
+        properties.setName("deepseek-v4-flash");
+
+        AgentEngine namedEngine = mock(AgentEngine.class);
+        when(agentEngine.withModelName("deepseek-v4-flash")).thenReturn(namedEngine);
+        when(namedEngine.run(any(), any(), any(), any(), any())).thenReturn(
+            new AgentRunResult(true, "Done", 1, null)
+        );
+        when(sessionService.getWorkingMemory(any())).thenReturn(List.of());
+
+        RunCommand cmd = createCommand(properties);
+        CommandLine cl = new CommandLine(cmd);
+
+        int exit = cl.execute("--prompt", "hello", "--engine", "real", "--dir", ".");
+        assertThat(exit).isEqualTo(0);
+    }
+
+    @Test
+    void usageCostSummaryNotShownWhenPricingIsZero() {
+        TinyClawModelProperties properties = new TinyClawModelProperties();
+        properties.setEnabled(true);
+        properties.setApiKey("sk-test");
+        properties.setName("test-model");
+        // pricing defaults to 0.0
+
+        AgentEngine namedEngine = mock(AgentEngine.class);
+        when(agentEngine.withModelName("test-model")).thenReturn(namedEngine);
+        when(namedEngine.run(any(), any(), any(), any(), any())).thenReturn(
+            new AgentRunResult(true, "Done", 2, null, new Usage(100, 50))
+        );
+        when(sessionService.getWorkingMemory(any())).thenReturn(List.of());
+
+        RunCommand cmd = createCommand(properties);
+        CommandLine cl = new CommandLine(cmd);
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        PrintStream originalOut = System.out;
+        System.setOut(new PrintStream(out));
+        try {
+            int exit = cl.execute("--prompt", "hello", "--engine", "real", "--dir", ".");
+            assertThat(exit).isEqualTo(0);
+            String output = out.toString();
+            assertThat(output).contains("usage:");
+            assertThat(output).doesNotContain("estimatedCost:");
+        } finally {
+            System.setOut(originalOut);
+        }
+    }
 }

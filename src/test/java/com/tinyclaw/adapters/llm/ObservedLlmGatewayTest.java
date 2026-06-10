@@ -1,23 +1,29 @@
 package com.tinyclaw.adapters.llm;
 
+import com.tinyclaw.application.persistence.UsageRecord;
 import com.tinyclaw.config.TinyClawModelProperties;
 import com.tinyclaw.domain.message.Usage;
+import com.tinyclaw.ports.llm.LlmErrorType;
 import com.tinyclaw.ports.llm.LlmException;
 import com.tinyclaw.ports.llm.LlmGateway;
 import com.tinyclaw.ports.llm.LlmRequest;
 import com.tinyclaw.ports.llm.LlmResponse;
+import com.tinyclaw.ports.persistence.UsageRepositoryPort;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Tags;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class ObservedLlmGatewayTest {
@@ -116,5 +122,96 @@ class ObservedLlmGatewayTest {
         assertThatThrownBy(() -> new ObservedLlmGateway(delegate, null, properties))
             .isInstanceOf(IllegalArgumentException.class)
             .hasMessageContaining("meterRegistry");
+    }
+
+    @Test
+    void persistsUsageWhenRepositoryProvidedAndEnabled() {
+        UsageRepositoryPort usageRepo = mock(UsageRepositoryPort.class);
+        properties.setUsageCostSummaryEnabled(true);
+
+        when(delegate.generate(any())).thenReturn(
+            new LlmResponse("ok", List.of(), new Usage(10, 20))
+        );
+
+        ObservedLlmGateway gateway = new ObservedLlmGateway(delegate, meterRegistry, properties, usageRepo);
+        LlmRequest request = new LlmRequest("test-model", List.of(), List.of(), com.tinyclaw.ports.llm.LlmRequestOptions.defaults());
+        gateway.generate(request);
+
+        verify(usageRepo).save(any(UsageRecord.class));
+    }
+
+    @Test
+    void doesNotPersistUsageWhenDisabled() {
+        UsageRepositoryPort usageRepo = mock(UsageRepositoryPort.class);
+        properties.setUsageCostSummaryEnabled(false);
+
+        when(delegate.generate(any())).thenReturn(
+            new LlmResponse("ok", List.of(), new Usage(10, 20))
+        );
+
+        ObservedLlmGateway gateway = new ObservedLlmGateway(delegate, meterRegistry, properties, usageRepo);
+        LlmRequest request = new LlmRequest("m", List.of(), List.of(), com.tinyclaw.ports.llm.LlmRequestOptions.defaults());
+        gateway.generate(request);
+
+        verify(usageRepo, never()).save(any());
+    }
+
+    @Test
+    void doesNotPersistUsageWhenResponseHasNoUsage() {
+        UsageRepositoryPort usageRepo = mock(UsageRepositoryPort.class);
+        properties.setUsageCostSummaryEnabled(true);
+
+        when(delegate.generate(any())).thenReturn(
+            new LlmResponse("ok", List.of(), null)
+        );
+
+        ObservedLlmGateway gateway = new ObservedLlmGateway(delegate, meterRegistry, properties, usageRepo);
+        LlmRequest request = new LlmRequest("m", List.of(), List.of(), com.tinyclaw.ports.llm.LlmRequestOptions.defaults());
+        gateway.generate(request);
+
+        verify(usageRepo, never()).save(any());
+    }
+
+    @Test
+    void cumulativeUsageAcrossMultipleCalls() {
+        List<Usage> usages = List.of(new Usage(10, 5), new Usage(20, 10), new Usage(5, 2));
+        List<LlmResponse> responses = new ArrayList<>();
+        for (Usage u : usages) {
+            responses.add(new LlmResponse("ok", List.of(), u));
+        }
+
+        ObservedLlmGateway gateway = createGateway();
+        for (LlmResponse response : responses) {
+            when(delegate.generate(any())).thenReturn(response);
+            gateway.generate(new LlmRequest("m", List.of(), List.of(), com.tinyclaw.ports.llm.LlmRequestOptions.defaults()));
+        }
+
+        Counter promptCounter = meterRegistry.find("tinyclaw.llm.tokens")
+            .tags(Tags.of("model", "m", "status", "success", "type", "prompt")).counter();
+        Counter completionCounter = meterRegistry.find("tinyclaw.llm.tokens")
+            .tags(Tags.of("model", "m", "status", "success", "type", "completion")).counter();
+
+        assertThat(promptCounter).isNotNull();
+        assertThat(promptCounter.count()).isEqualTo(35.0); // 10 + 20 + 5
+        assertThat(completionCounter).isNotNull();
+        assertThat(completionCounter.count()).isEqualTo(17.0); // 5 + 10 + 2
+    }
+
+    @Test
+    void recordsFailureTagForTypedException() {
+        when(delegate.generate(any())).thenThrow(
+            new LlmException("timeout", LlmErrorType.TIMEOUT)
+        );
+
+        ObservedLlmGateway gateway = createGateway();
+        LlmRequest request = new LlmRequest("m", List.of(), List.of(), com.tinyclaw.ports.llm.LlmRequestOptions.defaults());
+
+        assertThatThrownBy(() -> gateway.generate(request))
+            .isInstanceOf(LlmException.class);
+
+        Counter requests = meterRegistry.find("tinyclaw.llm.requests")
+            .tags(Tags.of("model", "m", "status", "failure")).counter();
+        assertThat(requests).isNotNull();
+        assertThat(requests.count()).isEqualTo(1.0);
     }
 }

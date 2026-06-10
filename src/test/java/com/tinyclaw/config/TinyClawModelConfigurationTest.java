@@ -1,6 +1,7 @@
 package com.tinyclaw.config;
 
 import com.tinyclaw.ports.llm.LlmGateway;
+import com.tinyclaw.ports.persistence.UsageRepositoryPort;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
@@ -144,6 +145,54 @@ class TinyClawModelConfigurationTest {
                 ))
                     .isInstanceOf(com.tinyclaw.ports.llm.LlmException.class)
                     .hasMessageContaining("requires an API key");
+            });
+    }
+
+    @Test
+    void injectsUsageRepositoryWhenAvailable() {
+        new ApplicationContextRunner()
+            .withPropertyValues(
+                "tiny-claw.model.enabled=true",
+                "tiny-claw.model.api-key=sk-test",
+                "tiny-claw.model.name=test-model"
+            )
+            .withConfiguration(AutoConfigurations.of(TinyClawModelConfiguration.class))
+            .withUserConfiguration(MeterRegistryConfig.class)
+            .withBean(ChatModel.class, () -> mock(ChatModel.class))
+            .withBean(UsageRepositoryPort.class, () -> mock(UsageRepositoryPort.class))
+            .withBean(TinyClawModelProperties.class, () -> {
+                TinyClawModelProperties p = new TinyClawModelProperties();
+                p.setEnabled(true);
+                p.setApiKey("sk-test");
+                p.setName("test-model");
+                return p;
+            })
+            .run(context -> {
+                assertThat(context).hasSingleBean(LlmGateway.class);
+            });
+    }
+
+    @Test
+    void deepseekV4FlashModelNameFlowsThroughConfiguration() {
+        new ApplicationContextRunner()
+            .withPropertyValues(
+                "tiny-claw.model.enabled=true",
+                "tiny-claw.model.api-key=sk-test",
+                "tiny-claw.model.name=deepseek-v4-flash"
+            )
+            .withConfiguration(AutoConfigurations.of(TinyClawModelConfiguration.class))
+            .withUserConfiguration(MeterRegistryConfig.class)
+            .withBean(ChatModel.class, () -> mock(ChatModel.class))
+            .withBean(TinyClawModelProperties.class, () -> {
+                TinyClawModelProperties p = new TinyClawModelProperties();
+                p.setEnabled(true);
+                p.setApiKey("sk-test");
+                p.setName("deepseek-v4-flash");
+                return p;
+            })
+            .run(context -> {
+                TinyClawModelProperties props = context.getBean(TinyClawModelProperties.class);
+                assertThat(props.getName()).isEqualTo("deepseek-v4-flash");
             });
     }
 

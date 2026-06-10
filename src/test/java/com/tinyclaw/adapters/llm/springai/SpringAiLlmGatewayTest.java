@@ -5,6 +5,7 @@ import com.tinyclaw.domain.message.Message;
 import com.tinyclaw.domain.message.ToolCall;
 import com.tinyclaw.domain.message.ToolDefinition;
 import com.tinyclaw.domain.message.Usage;
+import com.tinyclaw.ports.llm.LlmErrorType;
 import com.tinyclaw.ports.llm.LlmException;
 import com.tinyclaw.ports.llm.LlmRequest;
 import com.tinyclaw.ports.llm.LlmRequestOptions;
@@ -18,6 +19,8 @@ import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.openai.OpenAiChatOptions;
+import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.ResourceAccessException;
 
 import java.util.List;
 
@@ -167,5 +170,58 @@ class SpringAiLlmGatewayTest {
         assertThat(capturedPrompt.getOptions()).isInstanceOf(OpenAiChatOptions.class);
         OpenAiChatOptions options = (OpenAiChatOptions) capturedPrompt.getOptions();
         assertThat(options.getModel()).isEqualTo("override-model");
+    }
+
+    @Test
+    void classifiesResourceAccessExceptionAsTransientNetwork() {
+        when(chatModel.call(any(Prompt.class))).thenThrow(new ResourceAccessException("I/O error"));
+
+        LlmRequest request = new LlmRequest("test", List.of(Message.user("hi")), List.of(), LlmRequestOptions.defaults());
+        assertThatThrownBy(() -> gateway.generate(request))
+            .isInstanceOf(LlmException.class)
+            .satisfies(e -> assertThat(((LlmException) e).getErrorType()).isEqualTo(LlmErrorType.TRANSIENT_NETWORK));
+    }
+
+    @Test
+    void classifiesHttp401AsAuthentication() {
+        when(chatModel.call(any(Prompt.class))).thenThrow(
+            HttpClientErrorException.create(org.springframework.http.HttpStatus.UNAUTHORIZED,
+                "Unauthorized", new org.springframework.http.HttpHeaders(), new byte[0], java.nio.charset.StandardCharsets.UTF_8));
+
+        LlmRequest request = new LlmRequest("test", List.of(Message.user("hi")), List.of(), LlmRequestOptions.defaults());
+        assertThatThrownBy(() -> gateway.generate(request))
+            .isInstanceOf(LlmException.class)
+            .satisfies(e -> assertThat(((LlmException) e).getErrorType()).isEqualTo(LlmErrorType.AUTHENTICATION));
+    }
+
+    @Test
+    void classifiesHttp429AsRateLimit() {
+        when(chatModel.call(any(Prompt.class))).thenThrow(
+            HttpClientErrorException.create(org.springframework.http.HttpStatus.TOO_MANY_REQUESTS,
+                "Too Many Requests", new org.springframework.http.HttpHeaders(), new byte[0], java.nio.charset.StandardCharsets.UTF_8));
+
+        LlmRequest request = new LlmRequest("test", List.of(Message.user("hi")), List.of(), LlmRequestOptions.defaults());
+        assertThatThrownBy(() -> gateway.generate(request))
+            .isInstanceOf(LlmException.class)
+            .satisfies(e -> assertThat(((LlmException) e).getErrorType()).isEqualTo(LlmErrorType.RATE_LIMIT));
+    }
+
+    @Test
+    void supportsDeepseekV4FlashModelName() {
+        when(chatModel.call(any(Prompt.class))).thenReturn(
+            new ChatResponse(List.of(new Generation(AssistantMessage.builder().content("Hello").build())))
+        );
+
+        TinyClawModelProperties props = new TinyClawModelProperties();
+        props.setName("deepseek-v4-flash");
+        SpringAiLlmGateway configuredGateway = new SpringAiLlmGateway(chatModel, props);
+
+        LlmRequest request = new LlmRequest("", List.of(Message.user("hi")), List.of(), LlmRequestOptions.defaults());
+        configuredGateway.generate(request);
+
+        org.mockito.ArgumentCaptor<Prompt> promptCaptor = org.mockito.ArgumentCaptor.forClass(Prompt.class);
+        verify(chatModel).call(promptCaptor.capture());
+        OpenAiChatOptions options = (OpenAiChatOptions) promptCaptor.getValue().getOptions();
+        assertThat(options.getModel()).isEqualTo("deepseek-v4-flash");
     }
 }

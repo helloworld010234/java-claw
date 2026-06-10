@@ -1,8 +1,12 @@
 package com.tinyclaw.config;
 
 import com.tinyclaw.adapters.llm.ObservedLlmGateway;
+import com.tinyclaw.adapters.llm.RetryingLlmGateway;
+import com.tinyclaw.adapters.llm.TimeoutLlmGateway;
 import com.tinyclaw.adapters.llm.springai.SpringAiLlmGateway;
+import com.tinyclaw.adapters.persistence.NoOpUsageRepository;
 import com.tinyclaw.ports.llm.LlmGateway;
+import com.tinyclaw.ports.persistence.UsageRepositoryPort;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.observation.ObservationRegistry;
 import org.springframework.ai.chat.model.ChatModel;
@@ -20,10 +24,18 @@ import org.springframework.retry.support.RetryTemplate;
  * Conditional configuration for real LLM integration via Spring AI.
  *
  * <p>Only active when {@code tiny-claw.model.enabled=true}. Creates the production
- * {@link LlmGateway} bean wrapped with usage/cost observation.</p>
+ * {@link LlmGateway} bean wrapped with timeout, retry, and usage/cost observation.</p>
  *
  * <p>If the API key is missing, the gateway fail-fasts on the first call with a clear
  * {@link com.tinyclaw.ports.llm.LlmException} instead of making a real network request.</p>
+ *
+ * <p>Wrapper chain (inner → outer):</p>
+ * <ol>
+ *   <li>{@link SpringAiLlmGateway} – Spring AI adapter</li>
+ *   <li>{@link TimeoutLlmGateway} – hard timeout guard</li>
+ *   <li>{@link RetryingLlmGateway} – retry transient failures</li>
+ *   <li>{@link ObservedLlmGateway} – metrics, usage, and optional persistence</li>
+ * </ol>
  */
 @Configuration
 public class TinyClawModelConfiguration {
@@ -33,7 +45,8 @@ public class TinyClawModelConfiguration {
     public LlmGateway realLlmGateway(
             ObjectProvider<ChatModel> chatModelProvider,
             TinyClawModelProperties properties,
-            MeterRegistry meterRegistry) {
+            MeterRegistry meterRegistry,
+            ObjectProvider<UsageRepositoryPort> usageRepositoryProvider) {
         String apiKey = properties.getApiKey();
         if (apiKey == null || apiKey.isBlank()) {
             LlmGateway failFastGateway = request -> {
@@ -47,8 +60,13 @@ public class TinyClawModelConfiguration {
 
         ChatModel chatModel = chatModelProvider.stream().findFirst()
             .orElseGet(() -> createChatModel(properties));
+
         LlmGateway springAiGateway = new SpringAiLlmGateway(chatModel, properties);
-        return new ObservedLlmGateway(springAiGateway, meterRegistry, properties);
+        LlmGateway timeoutGateway = new TimeoutLlmGateway(springAiGateway, properties);
+        LlmGateway retryingGateway = new RetryingLlmGateway(timeoutGateway, properties);
+
+        UsageRepositoryPort usageRepository = usageRepositoryProvider.getIfAvailable(NoOpUsageRepository::new);
+        return new ObservedLlmGateway(retryingGateway, meterRegistry, properties, usageRepository);
     }
 
     private ChatModel createChatModel(TinyClawModelProperties properties) {

@@ -19,6 +19,12 @@ public class TinyClawModelProperties {
     private int maxTokens = 4096;
     private Pricing pricing = new Pricing();
 
+    // Reliability settings
+    private int requestTimeoutSeconds = 60;
+    private int maxRetryAttempts = 3;
+    private long retryBackoffMs = 1000;
+    private boolean usageCostSummaryEnabled = true;
+
     public boolean isEnabled() {
         return enabled;
     }
@@ -81,6 +87,38 @@ public class TinyClawModelProperties {
 
     public void setPricing(Pricing pricing) {
         this.pricing = pricing != null ? pricing : new Pricing();
+    }
+
+    public int getRequestTimeoutSeconds() {
+        return requestTimeoutSeconds;
+    }
+
+    public void setRequestTimeoutSeconds(int requestTimeoutSeconds) {
+        this.requestTimeoutSeconds = requestTimeoutSeconds;
+    }
+
+    public int getMaxRetryAttempts() {
+        return maxRetryAttempts;
+    }
+
+    public void setMaxRetryAttempts(int maxRetryAttempts) {
+        this.maxRetryAttempts = maxRetryAttempts;
+    }
+
+    public long getRetryBackoffMs() {
+        return retryBackoffMs;
+    }
+
+    public void setRetryBackoffMs(long retryBackoffMs) {
+        this.retryBackoffMs = retryBackoffMs;
+    }
+
+    public boolean isUsageCostSummaryEnabled() {
+        return usageCostSummaryEnabled;
+    }
+
+    public void setUsageCostSummaryEnabled(boolean usageCostSummaryEnabled) {
+        this.usageCostSummaryEnabled = usageCostSummaryEnabled;
     }
 
     /**
