@@ -12,7 +12,7 @@ import picocli.CommandLine.Command;
     name = "tiny-claw",
     description = "TinyClaw Agent Harness CLI",
     mixinStandardHelpOptions = true,
-    subcommands = {RunCommand.class, ToolCommand.class}
+    subcommands = {RunCommand.class, ToolCommand.class, RunsCommand.class}
 )
 public class RootCommand implements Runnable {
 

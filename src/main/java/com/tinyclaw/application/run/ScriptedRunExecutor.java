@@ -2,14 +2,18 @@ package com.tinyclaw.application.run;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.tinyclaw.application.persistence.ToolExecutionRecord;
 import com.tinyclaw.application.tool.ToolRegistry;
 import com.tinyclaw.domain.common.DomainGuards;
 import com.tinyclaw.domain.message.ToolCall;
 import com.tinyclaw.domain.message.ToolResult;
+import com.tinyclaw.ports.persistence.ToolExecutionRepositoryPort;
 import com.tinyclaw.ports.tool.ToolExecutionContext;
 
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 
 /**
  * Executes a scripted run plan by translating each step into a {@link ToolCall}
@@ -26,6 +30,11 @@ public class ScriptedRunExecutor {
     }
 
     public ScriptedRunResult execute(ScriptedRunPlan plan, ToolExecutionContext context) {
+        return execute(plan, context, null, null, null);
+    }
+
+    public ScriptedRunResult execute(ScriptedRunPlan plan, ToolExecutionContext context,
+                                      String runId, String sessionId, ToolExecutionRepositoryPort toolRepo) {
         List<ScriptedRunStepResult> results = new ArrayList<>();
 
         for (ScriptedRunStep step : plan.steps()) {
@@ -44,10 +53,29 @@ public class ScriptedRunExecutor {
             }
 
             ToolCall call = ToolCall.of(step.id(), step.tool(), argsJson);
+            Instant startedAt = Instant.now();
             ToolResult result = toolRegistry.execute(call, context);
+            Instant completedAt = Instant.now();
+
             results.add(new ScriptedRunStepResult(
                 step.id(), step.tool(), result.error(), result.output()
             ));
+
+            if (toolRepo != null && runId != null) {
+                ToolExecutionRecord record = new ToolExecutionRecord(
+                    UUID.randomUUID().toString(),
+                    runId,
+                    sessionId,
+                    step.id(),
+                    step.tool(),
+                    argsJson,
+                    result.output(),
+                    result.error(),
+                    startedAt,
+                    completedAt
+                );
+                toolRepo.append(runId, record);
+            }
 
             if (result.error() && plan.shouldStopOnError()) {
                 break;

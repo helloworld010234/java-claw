@@ -17,6 +17,11 @@ class CliModeDetectorTest {
     }
 
     @Test
+    void runsIsCliMode() {
+        assertThat(CliModeDetector.isCliMode(new String[]{"runs", "show", "--run-id", "abc"})).isTrue();
+    }
+
+    @Test
     void onlySpringArgsIsNotCliMode() {
         assertThat(CliModeDetector.isCliMode(new String[]{
             "--spring.profiles.active=test",

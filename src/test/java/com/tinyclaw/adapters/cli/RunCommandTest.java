@@ -46,13 +46,18 @@ class RunCommandTest {
             new EditFileTool()
         ));
         LlmGateway dummyLlm = request -> new LlmResponse("", List.of(), null);
+        InMemorySessionService sessionService = new InMemorySessionService();
         AgentEngine agentEngine = new AgentEngine(
-            dummyLlm, registry, new PromptComposer(), new NoOpReporter(), new InMemorySessionService()
+            dummyLlm, registry, new PromptComposer(), new NoOpReporter(), sessionService
         );
         command = new RunCommand(
             new ScriptedRunExecutor(registry, new ObjectMapper()),
             agentEngine,
-            new ObjectMapper()
+            new ObjectMapper(),
+            sessionService,
+            null,
+            null,
+            null
         );
         out = new ByteArrayOutputStream();
         err = new ByteArrayOutputStream();

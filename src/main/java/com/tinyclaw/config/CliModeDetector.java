@@ -9,7 +9,7 @@ import java.util.Set;
  */
 public final class CliModeDetector {
 
-    private static final Set<String> KNOWN_COMMANDS = Set.of("run", "tool");
+    private static final Set<String> KNOWN_COMMANDS = Set.of("run", "tool", "runs");
 
     private CliModeDetector() {
         // utility class

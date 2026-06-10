@@ -9,8 +9,14 @@ import com.tinyclaw.application.run.ScriptedRunPlan;
 import com.tinyclaw.application.run.ScriptedRunResult;
 import com.tinyclaw.application.run.ScriptedRunStepResult;
 import com.tinyclaw.domain.common.DomainGuards;
+import com.tinyclaw.domain.message.Message;
+import com.tinyclaw.domain.message.Role;
 import com.tinyclaw.domain.run.AgentRun;
 import com.tinyclaw.domain.session.Session;
+import com.tinyclaw.ports.persistence.MessageRepositoryPort;
+import com.tinyclaw.ports.persistence.RunRepositoryPort;
+import com.tinyclaw.ports.persistence.ToolExecutionRepositoryPort;
+import com.tinyclaw.ports.session.SessionService;
 import com.tinyclaw.ports.tool.ToolExecutionContext;
 import org.springframework.context.annotation.Scope;
 import org.springframework.stereotype.Component;
@@ -22,6 +28,10 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.time.Instant;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.Callable;
 
@@ -47,13 +57,25 @@ public class RunCommand implements Callable<Integer> {
     private final ScriptedRunExecutor scriptedRunExecutor;
     private final AgentEngine agentEngine;
     private final ObjectMapper objectMapper;
+    private final SessionService sessionService;
+    private final RunRepositoryPort runRepository;
+    private final MessageRepositoryPort messageRepository;
+    private final ToolExecutionRepositoryPort toolExecutionRepository;
 
     public RunCommand(ScriptedRunExecutor scriptedRunExecutor,
                       AgentEngine agentEngine,
-                      ObjectMapper objectMapper) {
+                      ObjectMapper objectMapper,
+                      SessionService sessionService,
+                      RunRepositoryPort runRepository,
+                      MessageRepositoryPort messageRepository,
+                      ToolExecutionRepositoryPort toolExecutionRepository) {
         this.scriptedRunExecutor = DomainGuards.requireNonNull(scriptedRunExecutor, "scriptedRunExecutor");
         this.agentEngine = DomainGuards.requireNonNull(agentEngine, "agentEngine");
         this.objectMapper = DomainGuards.requireNonNull(objectMapper, "objectMapper");
+        this.sessionService = DomainGuards.requireNonNull(sessionService, "sessionService");
+        this.runRepository = runRepository;
+        this.messageRepository = messageRepository;
+        this.toolExecutionRepository = toolExecutionRepository;
     }
 
     @Option(
@@ -148,24 +170,98 @@ public class RunCommand implements Callable<Integer> {
             return 2;
         }
 
+        Session session = Session.create(effectiveSessionId, workspace.toAbsolutePath().toString(), Instant.now());
+        AgentRun run = AgentRun.start("run-" + effectiveSessionId, effectiveSessionId, 5, Instant.now());
+
+        if (runRepository != null) {
+            runRepository.saveSession(session);
+            runRepository.saveRunStarted(run, "plan", prompt);
+        }
+
         ToolExecutionContext context = new ToolExecutionContext(workspace);
-        ScriptedRunResult result = scriptedRunExecutor.execute(plan, context);
+        ScriptedRunResult result = scriptedRunExecutor.execute(plan, context, run.id(), session.id(), toolExecutionRepository);
+
+        AgentRun finalRun;
+        if (result.success()) {
+            finalRun = run.complete(Instant.now());
+            if (runRepository != null) {
+                runRepository.saveRunCompleted(finalRun);
+            }
+        } else {
+            String errorReason = result.steps().stream()
+                .filter(ScriptedRunStepResult::error)
+                .findFirst()
+                .map(ScriptedRunStepResult::output)
+                .orElse("Plan execution failed");
+            finalRun = run.fail(errorReason, Instant.now());
+            if (runRepository != null) {
+                runRepository.saveRunFailed(finalRun, errorReason);
+            }
+        }
 
         printPlanSummary(effectiveSessionId, workspace, result);
         return result.success() ? 0 : 1;
     }
 
     private Integer runAgentEngine(String effectiveSessionId, Path workspace) {
-        Session session = Session.create(effectiveSessionId, workspace.toAbsolutePath().toString(), java.time.Instant.now());
-        AgentRun run = AgentRun.start("run-" + effectiveSessionId, effectiveSessionId, 5, java.time.Instant.now());
-        ToolExecutionContext context = new ToolExecutionContext(workspace);
+        Session session = Session.create(effectiveSessionId, workspace.toAbsolutePath().toString(), Instant.now());
+        AgentRun run = AgentRun.start("run-" + effectiveSessionId, effectiveSessionId, 5, Instant.now());
 
+        if (runRepository != null) {
+            runRepository.saveSession(session);
+            runRepository.saveRunStarted(run, "agent", prompt);
+        }
+
+        // Save user prompt message
+        if (messageRepository != null) {
+            messageRepository.append(run.id(), session.id(), Message.user(prompt));
+        }
+
+        // Remember which messages exist before engine runs
+        List<Message> messagesBefore = sessionService.getWorkingMemory(session.id());
+        Set<String> messageSignaturesBefore = new HashSet<>();
+        for (Message m : messagesBefore) {
+            messageSignaturesBefore.add(messageSignature(m));
+        }
+
+        ToolExecutionContext context = new ToolExecutionContext(workspace);
         FakeLlmGateway fakeLlm = FakeLlmGateway.forPrompt(prompt);
         AgentEngine fakeEngine = agentEngine.withLlmGateway(fakeLlm);
         AgentRunResult result = fakeEngine.run(run, session, prompt, context);
 
+        // Persist any new messages produced by the engine
+        if (messageRepository != null) {
+            List<Message> messagesAfter = sessionService.getWorkingMemory(session.id());
+            for (Message m : messagesAfter) {
+                if (m.role() == Role.SYSTEM) {
+                    continue;
+                }
+                String sig = messageSignature(m);
+                if (!messageSignaturesBefore.contains(sig)) {
+                    messageRepository.append(run.id(), session.id(), m);
+                }
+            }
+        }
+
+        AgentRun finalRun;
+        if (result.success()) {
+            finalRun = run.complete(Instant.now());
+            if (runRepository != null) {
+                runRepository.saveRunCompleted(finalRun);
+            }
+        } else {
+            finalRun = run.fail(result.errorReason(), Instant.now());
+            if (runRepository != null) {
+                runRepository.saveRunFailed(finalRun, result.errorReason());
+            }
+        }
+
         printAgentSummary(effectiveSessionId, workspace, result);
         return result.success() ? 0 : 1;
+    }
+
+    private String messageSignature(Message message) {
+        return message.role().name() + "|" + message.content() + "|" + message.toolCallId();
     }
 
     private Path resolveWorkspace(String dir) {

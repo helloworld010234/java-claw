@@ -40,4 +40,19 @@ class FlywayMigrationTest {
                 "USAGE_RECORDS"
             );
     }
+
+    @Test
+    void auditColumnsShouldExist() {
+        List<String> runColumns = jdbcTemplate.queryForList(
+            "SELECT UPPER(COLUMN_NAME) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'AGENT_RUNS'",
+            String.class
+        );
+        assertThat(runColumns).contains("MODE", "PROMPT", "COMPLETED_AT");
+
+        List<String> toolColumns = jdbcTemplate.queryForList(
+            "SELECT UPPER(COLUMN_NAME) FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 'TOOL_EXECUTIONS'",
+            String.class
+        );
+        assertThat(toolColumns).contains("STARTED_AT", "COMPLETED_AT");
+    }
 }
