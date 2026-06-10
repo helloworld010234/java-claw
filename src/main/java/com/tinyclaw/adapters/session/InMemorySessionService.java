@@ -34,6 +34,12 @@ public class InMemorySessionService implements SessionService {
         return List.copyOf(messages);
     }
 
+    @Override
+    public void replaceMessages(String sessionId, List<Message> messages) {
+        List<Message> copy = messages == null ? List.of() : List.copyOf(messages);
+        store.put(sessionId, Collections.synchronizedList(new ArrayList<>(copy)));
+    }
+
     /**
      * Clear all stored messages.
      */

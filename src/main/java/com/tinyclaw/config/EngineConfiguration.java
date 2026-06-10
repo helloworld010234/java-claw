@@ -3,14 +3,19 @@ package com.tinyclaw.config;
 import com.tinyclaw.adapters.llm.fake.FakeLlmGateway;
 import com.tinyclaw.adapters.reporter.ConsoleReporter;
 import com.tinyclaw.adapters.session.InMemorySessionService;
+import com.tinyclaw.application.engine.AgentContextBuilder;
 import com.tinyclaw.application.engine.AgentEngine;
+import com.tinyclaw.application.engine.ContextCompactor;
 import com.tinyclaw.application.engine.PromptComposer;
+import com.tinyclaw.application.engine.ToolFailureRecoveryAdvisor;
+import com.tinyclaw.application.engine.WorkingMemorySelector;
 import com.tinyclaw.application.tool.ToolRegistry;
 import com.tinyclaw.ports.llm.LlmGateway;
 import com.tinyclaw.ports.llm.LlmException;
 import com.tinyclaw.ports.reporter.Reporter;
 import com.tinyclaw.ports.session.SessionService;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -24,6 +29,7 @@ import java.time.Clock;
  * configuration (e.g., Spring AI adapter) or a test {@code @TestConfiguration}.</p>
  */
 @Configuration
+@EnableConfigurationProperties(TinyClawModelProperties.class)
 public class EngineConfiguration {
 
     @Bean
@@ -34,6 +40,28 @@ public class EngineConfiguration {
     @Bean
     PromptComposer promptComposer() {
         return new PromptComposer();
+    }
+
+    @Bean
+    WorkingMemorySelector workingMemorySelector() {
+        return new WorkingMemorySelector();
+    }
+
+    @Bean
+    ContextCompactor contextCompactor() {
+        return new ContextCompactor();
+    }
+
+    @Bean
+    AgentContextBuilder agentContextBuilder(PromptComposer promptComposer,
+                                            WorkingMemorySelector workingMemorySelector,
+                                            ContextCompactor contextCompactor) {
+        return new AgentContextBuilder(promptComposer, workingMemorySelector, contextCompactor);
+    }
+
+    @Bean
+    ToolFailureRecoveryAdvisor toolFailureRecoveryAdvisor() {
+        return new ToolFailureRecoveryAdvisor();
     }
 
     @Bean
@@ -65,7 +93,10 @@ public class EngineConfiguration {
                             PromptComposer promptComposer,
                             Reporter reporter,
                             SessionService sessionService,
-                            Clock clock) {
-        return new AgentEngine(llmGateway, toolRegistry, promptComposer, reporter, sessionService, clock);
+                            Clock clock,
+                            AgentContextBuilder agentContextBuilder,
+                            ToolFailureRecoveryAdvisor toolFailureRecoveryAdvisor) {
+        return new AgentEngine(llmGateway, toolRegistry, promptComposer, reporter, sessionService, clock,
+            agentContextBuilder, toolFailureRecoveryAdvisor);
     }
 }

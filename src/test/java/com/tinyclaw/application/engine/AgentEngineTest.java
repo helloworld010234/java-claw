@@ -8,6 +8,10 @@ import com.tinyclaw.adapters.tools.filesystem.ReadFileTool;
 import com.tinyclaw.adapters.tools.filesystem.WriteFileTool;
 import com.tinyclaw.adapters.tools.filesystem.WorkspacePathResolver;
 import com.tinyclaw.application.approval.ApprovalGatePolicy;
+import com.tinyclaw.application.engine.AgentContextBuilder;
+import com.tinyclaw.application.engine.ContextCompactor;
+import com.tinyclaw.application.engine.ToolFailureRecoveryAdvisor;
+import com.tinyclaw.application.engine.WorkingMemorySelector;
 import com.tinyclaw.application.tool.ToolRegistry;
 import com.tinyclaw.domain.message.Message;
 import com.tinyclaw.domain.message.ToolCall;
@@ -37,6 +41,7 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -431,6 +436,187 @@ class AgentEngineTest {
         assertThat(approvalRepo.requests).hasSize(1);
         assertThat(approvalRepo.requests.get(0).status()).isEqualTo(ApprovalStatus.PENDING);
         assertThat(approvalRepo.requests.get(0).toolCallId()).isEqualTo("t1");
+    }
+
+    @Test
+    void usesAgentContextBuilderForLlmRequest() {
+        Message markedSystem = Message.system("MARKED-SYSTEM");
+        PromptComposer markingComposer = new PromptComposer() {
+            @Override
+            public Message compose(String workspaceRoot) {
+                return markedSystem;
+            }
+        };
+        AgentContextBuilder customBuilder = new AgentContextBuilder(
+            markingComposer,
+            new WorkingMemorySelector(),
+            new ContextCompactor()
+        );
+        FakeLlmGateway fakeLlm = new FakeLlmGateway(List.of(
+            new LlmResponse("ok", List.of(), null)
+        ));
+        AgentEngine engine = new AgentEngine(
+            fakeLlm, toolRegistry, promptComposer, reporter, sessionService, clock,
+            customBuilder, new ToolFailureRecoveryAdvisor()
+        );
+
+        engine.run(startRun(3), createSession(), "Hello", new ToolExecutionContext(workspace));
+
+        List<LlmRequest> requests = fakeLlm.recordedRequests();
+        assertThat(requests).hasSize(1);
+        assertThat(requests.get(0).messages().get(0)).isEqualTo(markedSystem);
+    }
+
+    @Test
+    void injectsRecoveryHintIntoErrorObservation() {
+        FakeLlmGateway fakeLlm = new FakeLlmGateway(List.of(
+            new LlmResponse("", List.of(
+                ToolCall.of("t1", "read_file", "{\"path\":\"missing.txt\"}")
+            ), null),
+            new LlmResponse("Could not read", List.of(), null)
+        ));
+        ToolFailureRecoveryAdvisor advisor = new ToolFailureRecoveryAdvisor();
+        AgentEngine engine = new AgentEngine(
+            fakeLlm, toolRegistry, promptComposer, reporter, sessionService, clock,
+            new AgentContextBuilder(promptComposer, new WorkingMemorySelector(), new ContextCompactor()),
+            advisor
+        );
+
+        engine.run(startRun(3), createSession(), "Read missing", new ToolExecutionContext(workspace));
+
+        List<Message> memory = sessionService.getWorkingMemory("session-1");
+        Message observation = memory.get(2);
+        assertThat(observation.role().name()).isEqualTo("USER");
+        assertThat(observation.toolCallId()).isEqualTo("t1");
+        assertThat(observation.content()).contains("File does not exist");
+        assertThat(observation.content()).contains("[Recovery hint]:");
+    }
+
+    @Test
+    void injectsReminderAfterThreeConsecutiveFailures() {
+        FakeLlmGateway fakeLlm = new FakeLlmGateway(List.of(
+            new LlmResponse("", List.of(
+                ToolCall.of("t1", "read_file", "{\"path\":\"missing.txt\"}")
+            ), null),
+            new LlmResponse("", List.of(
+                ToolCall.of("t2", "read_file", "{\"path\":\"missing.txt\"}")
+            ), null),
+            new LlmResponse("", List.of(
+                ToolCall.of("t3", "read_file", "{\"path\":\"missing.txt\"}")
+            ), null),
+            new LlmResponse("Stopped", List.of(), null)
+        ));
+        ToolFailureRecoveryAdvisor advisor = new ToolFailureRecoveryAdvisor();
+        AgentEngine engine = new AgentEngine(
+            fakeLlm, toolRegistry, promptComposer, reporter, sessionService, clock,
+            new AgentContextBuilder(promptComposer, new WorkingMemorySelector(), new ContextCompactor()),
+            advisor
+        );
+
+        AgentRunResult result = engine.run(
+            startRun(10), createSession(), "Keep reading missing file", new ToolExecutionContext(workspace)
+        );
+
+        assertThat(result.success()).isFalse();
+        List<Message> memory = sessionService.getWorkingMemory("session-1");
+        boolean hasReminder = memory.stream()
+            .anyMatch(m -> m.role().name().equals("USER")
+                && m.content().contains("SYSTEM REMINDER")
+                && m.content().contains("read_file"));
+        assertThat(hasReminder).isTrue();
+    }
+
+    @Test
+    void failureReminderStateIsIsolatedAcrossRuns() {
+        // First run: three consecutive failures trigger reminder
+        FakeLlmGateway fakeLlmRun1 = new FakeLlmGateway(List.of(
+            new LlmResponse("", List.of(
+                ToolCall.of("t1", "read_file", "{\"path\":\"missing.txt\"}")
+            ), null),
+            new LlmResponse("", List.of(
+                ToolCall.of("t2", "read_file", "{\"path\":\"missing.txt\"}")
+            ), null),
+            new LlmResponse("", List.of(
+                ToolCall.of("t3", "read_file", "{\"path\":\"missing.txt\"}")
+            ), null),
+            new LlmResponse("Stopped", List.of(), null)
+        ));
+        AgentEngine engine = new AgentEngine(
+            fakeLlmRun1, toolRegistry, promptComposer, reporter, sessionService, clock,
+            new AgentContextBuilder(promptComposer, new WorkingMemorySelector(), new ContextCompactor()),
+            new ToolFailureRecoveryAdvisor()
+        );
+
+        AgentRunResult result1 = engine.run(
+            startRun(10), createSession(), "Run 1", new ToolExecutionContext(workspace)
+        );
+        assertThat(result1.success()).isFalse();
+        List<Message> memory1 = sessionService.getWorkingMemory("session-1");
+        long reminderCount1 = memory1.stream()
+            .filter(m -> m.role().name().equals("USER") && m.content().contains("SYSTEM REMINDER"))
+            .count();
+        assertThat(reminderCount1).isOne();
+
+        // Second run: same engine (via withLlmGateway), same tool/args, only two failures -> no reminder
+        FakeLlmGateway fakeLlmRun2 = new FakeLlmGateway(List.of(
+            new LlmResponse("", List.of(
+                ToolCall.of("t4", "read_file", "{\"path\":\"missing.txt\"}")
+            ), null),
+            new LlmResponse("", List.of(
+                ToolCall.of("t5", "read_file", "{\"path\":\"missing.txt\"}")
+            ), null),
+            new LlmResponse("Stopped", List.of(), null)
+        ));
+        AgentEngine sameEngine = engine.withLlmGateway(fakeLlmRun2);
+
+        AgentRunResult result2 = sameEngine.run(
+            AgentRun.start("run-2", "session-2", 10, clock.instant()),
+            Session.create("session-2", workspace.toAbsolutePath().toString(), clock.instant()),
+            "Run 2", new ToolExecutionContext(workspace)
+        );
+        assertThat(result2.success()).isFalse();
+        List<Message> memory2 = sessionService.getWorkingMemory("session-2");
+        long reminderCount2 = memory2.stream()
+            .filter(m -> m.role().name().equals("USER") && m.content().contains("SYSTEM REMINDER"))
+            .count();
+        assertThat(reminderCount2).isZero();
+    }
+
+    @Test
+    void reminderCounterResetsAfterToolSuccess() throws Exception {
+        // Sequence: fail, fail, success (write_file), fail -> no reminder because counter reset
+        Files.writeString(workspace.resolve("exists.txt"), "data");
+        FakeLlmGateway fakeLlm = new FakeLlmGateway(List.of(
+            new LlmResponse("", List.of(
+                ToolCall.of("f1", "read_file", "{\"path\":\"missing.txt\"}")
+            ), null),
+            new LlmResponse("", List.of(
+                ToolCall.of("f2", "read_file", "{\"path\":\"missing.txt\"}")
+            ), null),
+            new LlmResponse("", List.of(
+                ToolCall.of("s1", "write_file", "{\"path\":\"exists.txt\",\"content\":\"ok\",\"overwrite\":true}")
+            ), null),
+            new LlmResponse("", List.of(
+                ToolCall.of("f3", "read_file", "{\"path\":\"missing.txt\"}")
+            ), null),
+            new LlmResponse("Done", List.of(), null)
+        ));
+        AgentEngine engine = new AgentEngine(
+            fakeLlm, toolRegistry, promptComposer, reporter, sessionService, clock,
+            new AgentContextBuilder(promptComposer, new WorkingMemorySelector(), new ContextCompactor()),
+            new ToolFailureRecoveryAdvisor()
+        );
+
+        AgentRunResult result = engine.run(
+            startRun(10), createSession(), "Mixed results", new ToolExecutionContext(workspace)
+        );
+
+        assertThat(result.success()).isFalse();
+        List<Message> memory = sessionService.getWorkingMemory("session-1");
+        long reminderCount = memory.stream()
+            .filter(m -> m.role().name().equals("USER") && m.content().contains("SYSTEM REMINDER"))
+            .count();
+        assertThat(reminderCount).isZero();
     }
 
     private AgentRun startRun(int maxTurns) {

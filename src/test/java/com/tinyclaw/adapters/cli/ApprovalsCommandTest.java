@@ -26,7 +26,9 @@ import picocli.CommandLine;
 
 import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
+import java.time.Clock;
 import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -74,28 +76,31 @@ class ApprovalsCommandTest {
         System.setErr(originalErr);
     }
 
+    private static final Instant BASE = Instant.parse("2026-01-01T00:00:00Z");
+    private static final Clock FIXED_CLOCK = Clock.fixed(BASE.plusMillis(1), ZoneOffset.UTC);
+
     private void seedRunAndApproval(String runId, String approvalId, ApprovalStatus status) {
-        Session session = Session.create("sess-" + runId, System.getProperty("java.io.tmpdir"), Instant.now());
+        Session session = Session.create("sess-" + runId, System.getProperty("java.io.tmpdir"), BASE);
         runRepository.saveSession(session);
-        AgentRun run = AgentRun.start(runId, session.id(), 5, Instant.now())
-            .fail("Approval required", Instant.now());
+        AgentRun run = AgentRun.start(runId, session.id(), 5, BASE)
+            .fail("Approval required", BASE);
         runRepository.saveRunStarted(run, "plan", "test");
 
         ApprovalRequest req = ApprovalRequest.pending(
-            approvalId, runId, session.id(), "tc-1", "shell_command", "{\"command\":\"echo hi\"}", Instant.now()
+            approvalId, runId, session.id(), "tc-1", "shell_command", "{\"command\":\"echo hi\"}", BASE
         );
         approvalRepository.save(req);
 
         if (status == ApprovalStatus.APPROVED) {
-            approvalRepository.update(req.approve("ok", Instant.now()));
+            approvalRepository.update(req.approve("ok", BASE.plusMillis(1)));
         } else if (status == ApprovalStatus.REJECTED) {
-            approvalRepository.update(req.reject("no", Instant.now()));
+            approvalRepository.update(req.reject("no", BASE.plusMillis(1)));
         }
 
         toolExecutionRepository.append(runId, new ToolExecutionRecord(
             "te-" + approvalId, runId, session.id(), "tc-1", "shell_command",
             "{\"command\":\"echo hi\"}",
-            "Approval required: " + approvalId, true, Instant.now(), Instant.now()
+            "Approval required: " + approvalId, true, BASE, BASE
         ));
     }
 
@@ -135,7 +140,7 @@ class ApprovalsCommandTest {
     void approvePendingSuccess() {
         seedRunAndApproval("run-approve", "apr-approve", ApprovalStatus.PENDING);
 
-        ApproveCommand cmd = new ApproveCommand(approvalRepository, java.time.Clock.systemUTC());
+        ApproveCommand cmd = new ApproveCommand(approvalRepository, FIXED_CLOCK);
         int exitCode = new CommandLine(cmd).execute(
             "--approval-id", "apr-approve",
             "--reason", "operator confirmed"
@@ -154,7 +159,7 @@ class ApprovalsCommandTest {
     void rejectPendingSuccess() {
         seedRunAndApproval("run-reject", "apr-reject", ApprovalStatus.PENDING);
 
-        RejectApprovalCommand cmd = new RejectApprovalCommand(approvalRepository, java.time.Clock.systemUTC());
+        RejectApprovalCommand cmd = new RejectApprovalCommand(approvalRepository, FIXED_CLOCK);
         int exitCode = new CommandLine(cmd).execute(
             "--approval-id", "apr-reject",
             "--reason", "unsafe command"
@@ -171,7 +176,7 @@ class ApprovalsCommandTest {
 
     @Test
     void approveNonExistentReturnsNonZero() {
-        ApproveCommand cmd = new ApproveCommand(approvalRepository, java.time.Clock.systemUTC());
+        ApproveCommand cmd = new ApproveCommand(approvalRepository, FIXED_CLOCK);
         int exitCode = new CommandLine(cmd).execute(
             "--approval-id", "missing",
             "--reason", "operator confirmed"
@@ -186,7 +191,7 @@ class ApprovalsCommandTest {
     void approveAlreadyApprovedReturnsNonZero() {
         seedRunAndApproval("run-double", "apr-double", ApprovalStatus.APPROVED);
 
-        ApproveCommand cmd = new ApproveCommand(approvalRepository, java.time.Clock.systemUTC());
+        ApproveCommand cmd = new ApproveCommand(approvalRepository, FIXED_CLOCK);
         int exitCode = new CommandLine(cmd).execute(
             "--approval-id", "apr-double",
             "--reason", "again"
@@ -201,7 +206,7 @@ class ApprovalsCommandTest {
     void blankReasonReturnsNonZero() {
         seedRunAndApproval("run-blank", "apr-blank", ApprovalStatus.PENDING);
 
-        ApproveCommand cmd = new ApproveCommand(approvalRepository, java.time.Clock.systemUTC());
+        ApproveCommand cmd = new ApproveCommand(approvalRepository, FIXED_CLOCK);
         int exitCode = new CommandLine(cmd).execute(
             "--approval-id", "apr-blank",
             "--reason", "   "

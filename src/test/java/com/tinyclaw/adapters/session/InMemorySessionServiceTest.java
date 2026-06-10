@@ -4,6 +4,7 @@ import com.tinyclaw.domain.message.Message;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -59,5 +60,36 @@ class InMemorySessionServiceTest {
 
         assertThatThrownBy(() -> memory.add(Message.assistant("x")))
             .isInstanceOf(UnsupportedOperationException.class);
+    }
+
+    @Test
+    void replaceMessagesOverwritesExistingHistory() {
+        service.appendMessage("s1", Message.user("old"));
+
+        service.replaceMessages("s1", List.of(Message.user("new1"), Message.assistant("new2")));
+
+        List<Message> memory = service.getWorkingMemory("s1");
+        assertThat(memory).hasSize(2);
+        assertThat(memory.get(0).content()).isEqualTo("new1");
+        assertThat(memory.get(1).content()).isEqualTo("new2");
+    }
+
+    @Test
+    void replaceMessagesIsIsolatedFromExternalListChanges() {
+        List<Message> external = new ArrayList<>();
+        external.add(Message.user("a"));
+        service.replaceMessages("s1", external);
+        external.add(Message.assistant("b"));
+
+        List<Message> memory = service.getWorkingMemory("s1");
+        assertThat(memory).hasSize(1);
+    }
+
+    @Test
+    void replaceMessagesWithEmptyListClearsSession() {
+        service.appendMessage("s1", Message.user("old"));
+        service.replaceMessages("s1", List.of());
+
+        assertThat(service.getWorkingMemory("s1")).isEmpty();
     }
 }

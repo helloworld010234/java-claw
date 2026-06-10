@@ -23,6 +23,7 @@ import com.tinyclaw.application.run.ScriptedRunExecutor;
 import com.tinyclaw.application.tool.AllowAllPolicy;
 import com.tinyclaw.application.tool.DangerousCommandPolicy;
 import com.tinyclaw.application.tool.ToolRegistry;
+import com.tinyclaw.domain.message.Message;
 import com.tinyclaw.domain.message.Role;
 import com.tinyclaw.domain.run.AgentRunStatus;
 import com.tinyclaw.ports.llm.LlmGateway;
@@ -77,6 +78,7 @@ class RunCommandAuditTest {
     private ByteArrayOutputStream err;
     private PrintStream originalOut;
     private PrintStream originalErr;
+    private InMemorySessionService sessionService;
 
     @BeforeEach
     void setUp() {
@@ -90,7 +92,7 @@ class RunCommandAuditTest {
             List.of(new AllowAllPolicy(), new DangerousCommandPolicy())
         );
         LlmGateway dummyLlm = request -> new LlmResponse("", List.of(), null);
-        InMemorySessionService sessionService = new InMemorySessionService();
+        sessionService = new InMemorySessionService();
         AgentEngine agentEngine = new AgentEngine(
             dummyLlm, registry, new PromptComposer(), new NoOpReporter(), sessionService
         );
@@ -101,7 +103,8 @@ class RunCommandAuditTest {
             sessionService,
             runRepository,
             messageRepository,
-            toolExecutionRepository
+            toolExecutionRepository,
+            new com.tinyclaw.config.TinyClawModelProperties()
         );
         out = new ByteArrayOutputStream();
         err = new ByteArrayOutputStream();
@@ -659,7 +662,8 @@ class RunCommandAuditTest {
             sessionService,
             runRepository,
             messageRepository,
-            toolExecutionRepository
+            toolExecutionRepository,
+            new com.tinyclaw.config.TinyClawModelProperties()
         );
 
         int exitCode = new CommandLine(approvalCommand).execute(
@@ -718,7 +722,8 @@ class RunCommandAuditTest {
             sessionService,
             runRepository,
             messageRepository,
-            toolExecutionRepository
+            toolExecutionRepository,
+            new com.tinyclaw.config.TinyClawModelProperties()
         );
 
         int exitCode = new CommandLine(approvalCommand).execute(
@@ -746,6 +751,48 @@ class RunCommandAuditTest {
         var approvals = approvalRepository.findByRunId(runId);
         assertThat(approvals).hasSize(1);
         assertThat(approvals.get(0).status().name()).isEqualTo("PENDING");
+    }
+
+    @Test
+    void sameSessionSecondFakeRunHydratesHistoryAndPersistsOnlyNewMessages() {
+        String session = "audit-hydrate";
+
+        int exitCode1 = commandLine().execute(
+            "--prompt", "hello",
+            "--dir", tempDir.toString(),
+            "--session", session,
+            "--engine", "fake"
+        );
+        restoreStreams();
+        String runId1 = extractRunId(out.toString());
+        assertThat(exitCode1).isZero();
+        assertThat(messageRepository.findByRunId(runId1)).hasSize(2);
+
+        setUp();
+        int exitCode2 = commandLine().execute(
+            "--prompt", "hello again",
+            "--dir", tempDir.toString(),
+            "--session", session,
+            "--engine", "fake"
+        );
+        restoreStreams();
+        String runId2 = extractRunId(out.toString());
+        assertThat(exitCode2).isZero();
+        assertThat(runId1).isNotEqualTo(runId2);
+
+        // Second run should have loaded history into the in-memory session
+        List<Message> memory = sessionService.getWorkingMemory(session);
+        assertThat(memory).hasSize(4);
+        assertThat(memory.get(0).content()).isEqualTo("hello");
+        assertThat(memory.get(1).content()).startsWith("Fake response to: hello");
+        assertThat(memory.get(2).content()).isEqualTo("hello again");
+        assertThat(memory.get(3).content()).startsWith("Fake response to: hello again");
+
+        // Persistence: run 2 should only have its own 2 new messages
+        assertThat(messageRepository.findByRunId(runId2)).hasSize(2);
+
+        // Session-level query should see all 4 non-system messages, no duplication
+        assertThat(messageRepository.findBySessionId(session, 0)).hasSize(4);
     }
 
     private String extractApprovalId(String output) {
@@ -792,7 +839,8 @@ class RunCommandAuditTest {
             sessionService,
             runRepository,
             messageRepository,
-            toolExecutionRepository
+            toolExecutionRepository,
+            new com.tinyclaw.config.TinyClawModelProperties()
         );
 
         int exitCode = new CommandLine(dangerCommand).execute(
@@ -883,7 +931,8 @@ class RunCommandAuditTest {
             sessionService,
             runRepository,
             messageRepository,
-            toolExecutionRepository
+            toolExecutionRepository,
+            new com.tinyclaw.config.TinyClawModelProperties()
         );
 
         int runExit = new CommandLine(runCommand).execute(
@@ -910,7 +959,7 @@ class RunCommandAuditTest {
 
         var pending = approvalRepository.findById(approvalId).orElseThrow();
         assertThat(pending.status().name()).isEqualTo("PENDING");
-        approvalRepository.update(pending.approve("operator confirmed", java.time.Instant.now()));
+        approvalRepository.update(pending.approve("operator confirmed", pending.requestedAt().plusMillis(1)));
 
         ApprovalResumeService resumeService = new ApprovalResumeService(
             approvalRepository, runRepository, toolExecutionRepository, registry, new com.tinyclaw.application.approval.ApprovalResumeLockRegistry(), java.time.Clock.systemUTC()
@@ -979,7 +1028,8 @@ class RunCommandAuditTest {
             sessionService,
             runRepository,
             messageRepository,
-            toolExecutionRepository
+            toolExecutionRepository,
+            new com.tinyclaw.config.TinyClawModelProperties()
         );
 
         int runExit = new CommandLine(runCommand).execute(
@@ -1000,7 +1050,7 @@ class RunCommandAuditTest {
         String approvalId = extractApprovalId(executions.get(0).output());
 
         var pending = approvalRepository.findById(approvalId).orElseThrow();
-        approvalRepository.update(pending.approve("ok", java.time.Instant.now()));
+        approvalRepository.update(pending.approve("ok", pending.requestedAt().plusMillis(1)));
 
         ApprovalResumeService resumeService = new ApprovalResumeService(
             approvalRepository, runRepository, toolExecutionRepository, registry,

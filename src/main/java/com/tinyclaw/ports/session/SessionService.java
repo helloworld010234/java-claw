@@ -26,4 +26,17 @@ public interface SessionService {
      * @return ordered list of messages, never null
      */
     List<Message> getWorkingMemory(String sessionId);
+
+    /**
+     * Replace the entire in-memory message list for a session.
+     *
+     * <p>Used when hydrating a session from persistent storage before a run.
+     * Implementations must store an immutable or synchronized copy so that
+     * later external modifications to the provided list do not affect the
+     * session.</p>
+     *
+     * @param sessionId the session identifier
+     * @param messages  the messages to set as the session history
+     */
+    void replaceMessages(String sessionId, List<Message> messages);
 }

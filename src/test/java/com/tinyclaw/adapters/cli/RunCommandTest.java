@@ -10,6 +10,7 @@ import com.tinyclaw.application.engine.AgentEngine;
 import com.tinyclaw.application.engine.PromptComposer;
 import com.tinyclaw.application.run.ScriptedRunExecutor;
 import com.tinyclaw.application.tool.ToolRegistry;
+import com.tinyclaw.config.TinyClawModelProperties;
 import com.tinyclaw.ports.llm.LlmGateway;
 import com.tinyclaw.ports.llm.LlmRequest;
 import com.tinyclaw.ports.llm.LlmResponse;
@@ -57,7 +58,8 @@ class RunCommandTest {
             sessionService,
             null,
             null,
-            null
+            null,
+            new TinyClawModelProperties()
         );
         out = new ByteArrayOutputStream();
         err = new ByteArrayOutputStream();

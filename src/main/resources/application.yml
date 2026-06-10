@@ -4,10 +4,16 @@ spring:
 
 tiny-claw:
   model:
+    enabled: false
     provider: spring-ai
     name: glm-4.5-air
     base-url: ${LLM_BASE_URL:}
     api-key: ${LLM_API_KEY:}
+    temperature: 0.7
+    max-tokens: 4096
+    pricing:
+      input-price-per-1m: 0.0
+      output-price-per-1m: 0.0
   agent:
     max-turns: 20
     max-tool-calls-per-turn: 8

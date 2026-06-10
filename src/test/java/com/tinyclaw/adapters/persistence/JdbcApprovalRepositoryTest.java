@@ -28,6 +28,8 @@ class JdbcApprovalRepositoryTest {
     @Autowired
     private JdbcApprovalRepository repository;
 
+    private static final Instant BASE = Instant.parse("2026-01-01T00:00:00Z");
+
     @BeforeEach
     void cleanUp() {
         jdbcTemplate.update("DELETE FROM approval_requests");
@@ -39,9 +41,9 @@ class JdbcApprovalRepositoryTest {
 
     private void seedSessionAndRun(String sessionId, String runId) {
         JdbcRunRepository runRepo = new JdbcRunRepository(jdbcTemplate);
-        Session session = Session.create(sessionId, "/tmp", Instant.now());
+        Session session = Session.create(sessionId, "/tmp", BASE);
         runRepo.saveSession(session);
-        AgentRun run = AgentRun.start(runId, sessionId, 5, Instant.now());
+        AgentRun run = AgentRun.start(runId, sessionId, 5, BASE);
         runRepo.saveRunStarted(run, "plan", "test");
     }
 
@@ -50,7 +52,7 @@ class JdbcApprovalRepositoryTest {
         seedSessionAndRun("sess-s1", "run-s1");
         ApprovalRequest request = ApprovalRequest.pending(
             "apr-1", "run-s1", "sess-s1", "tc-1", "shell_command",
-            "{\"command\":\"echo hi\"}", Instant.now()
+            "{\"command\":\"echo hi\"}", BASE
         );
 
         repository.save(request);
@@ -66,10 +68,10 @@ class JdbcApprovalRepositoryTest {
     void findByRunId() {
         seedSessionAndRun("sess-f1", "run-f1");
         repository.save(ApprovalRequest.pending(
-            "apr-2", "run-f1", "sess-f1", "tc-2", "shell_command", "args1", Instant.now()
+            "apr-2", "run-f1", "sess-f1", "tc-2", "shell_command", "args1", BASE
         ));
         repository.save(ApprovalRequest.pending(
-            "apr-3", "run-f1", "sess-f1", "tc-3", "write_file", "args2", Instant.now()
+            "apr-3", "run-f1", "sess-f1", "tc-3", "write_file", "args2", BASE
         ));
 
         List<ApprovalRequest> found = repository.findByRunId("run-f1");
@@ -80,7 +82,7 @@ class JdbcApprovalRepositoryTest {
     void findByStatus() {
         seedSessionAndRun("sess-f2", "run-f2");
         repository.save(ApprovalRequest.pending(
-            "apr-4", "run-f2", "sess-f2", "tc-4", "shell_command", "args", Instant.now()
+            "apr-4", "run-f2", "sess-f2", "tc-4", "shell_command", "args", BASE
         ));
 
         List<ApprovalRequest> pending = repository.findByStatus(ApprovalStatus.PENDING);
@@ -95,11 +97,11 @@ class JdbcApprovalRepositoryTest {
     void updateApprove() {
         seedSessionAndRun("sess-u1", "run-u1");
         ApprovalRequest request = ApprovalRequest.pending(
-            "apr-5", "run-u1", "sess-u1", "tc-5", "shell_command", "args", Instant.now()
+            "apr-5", "run-u1", "sess-u1", "tc-5", "shell_command", "args", BASE
         );
         repository.save(request);
 
-        ApprovalRequest approved = request.approve("operator confirmed", Instant.now());
+        ApprovalRequest approved = request.approve("operator confirmed", BASE.plusMillis(1));
         repository.update(approved);
 
         Optional<ApprovalRequest> found = repository.findById("apr-5");
@@ -113,11 +115,11 @@ class JdbcApprovalRepositoryTest {
     void updateReject() {
         seedSessionAndRun("sess-u2", "run-u2");
         ApprovalRequest request = ApprovalRequest.pending(
-            "apr-6", "run-u2", "sess-u2", "tc-6", "shell_command", "args", Instant.now()
+            "apr-6", "run-u2", "sess-u2", "tc-6", "shell_command", "args", BASE
         );
         repository.save(request);
 
-        ApprovalRequest rejected = request.reject("unsafe", Instant.now());
+        ApprovalRequest rejected = request.reject("unsafe", BASE.plusMillis(1));
         repository.update(rejected);
 
         Optional<ApprovalRequest> found = repository.findById("apr-6");
@@ -130,7 +132,7 @@ class JdbcApprovalRepositoryTest {
     void findByRunIdAndToolCallId() {
         seedSessionAndRun("sess-f3", "run-f3");
         repository.save(ApprovalRequest.pending(
-            "apr-7", "run-f3", "sess-f3", "tc-7", "shell_command", "args", Instant.now()
+            "apr-7", "run-f3", "sess-f3", "tc-7", "shell_command", "args", BASE
         ));
 
         Optional<ApprovalRequest> found = repository.findByRunIdAndToolCallId("run-f3", "tc-7");
@@ -160,12 +162,12 @@ class JdbcApprovalRepositoryTest {
     void claimForResumeOnApprovedReturnsTrueAndSetsResuming() {
         seedSessionAndRun("sess-claim", "run-claim");
         ApprovalRequest request = ApprovalRequest.pending(
-            "apr-claim", "run-claim", "sess-claim", "tc-1", "shell_command", "args", Instant.now()
+            "apr-claim", "run-claim", "sess-claim", "tc-1", "shell_command", "args", BASE
         );
         repository.save(request);
-        repository.update(request.approve("ok", Instant.now()));
+        repository.update(request.approve("ok", BASE.plusMillis(1)));
 
-        boolean claimed = repository.claimForResume("apr-claim", Instant.now());
+        boolean claimed = repository.claimForResume("apr-claim", BASE.plusMillis(1));
 
         assertThat(claimed).isTrue();
         ApprovalRequest after = repository.findById("apr-claim").orElseThrow();
@@ -177,13 +179,13 @@ class JdbcApprovalRepositoryTest {
     void claimForResumeOnAlreadyResumingReturnsFalse() {
         seedSessionAndRun("sess-claim2", "run-claim2");
         ApprovalRequest request = ApprovalRequest.pending(
-            "apr-claim2", "run-claim2", "sess-claim2", "tc-1", "shell_command", "args", Instant.now()
+            "apr-claim2", "run-claim2", "sess-claim2", "tc-1", "shell_command", "args", BASE
         );
         repository.save(request);
-        repository.update(request.approve("ok", Instant.now()));
-        repository.claimForResume("apr-claim2", Instant.now());
+        repository.update(request.approve("ok", BASE.plusMillis(1)));
+        repository.claimForResume("apr-claim2", BASE.plusMillis(1));
 
-        boolean second = repository.claimForResume("apr-claim2", Instant.now());
+        boolean second = repository.claimForResume("apr-claim2", BASE.plusMillis(2));
 
         assertThat(second).isFalse();
     }
@@ -192,15 +194,15 @@ class JdbcApprovalRepositoryTest {
     void claimForResumeOnResumedReturnsFalse() {
         seedSessionAndRun("sess-claim3", "run-claim3");
         ApprovalRequest request = ApprovalRequest.pending(
-            "apr-claim3", "run-claim3", "sess-claim3", "tc-1", "shell_command", "args", Instant.now()
+            "apr-claim3", "run-claim3", "sess-claim3", "tc-1", "shell_command", "args", BASE
         );
         repository.save(request);
-        repository.update(request.approve("ok", Instant.now()));
-        repository.claimForResume("apr-claim3", Instant.now());
+        repository.update(request.approve("ok", BASE.plusMillis(1)));
+        repository.claimForResume("apr-claim3", BASE.plusMillis(1));
         ApprovalRequest resuming = repository.findById("apr-claim3").orElseThrow();
-        repository.update(resuming.markResumed("done", Instant.now()));
+        repository.update(resuming.markResumed("done", BASE.plusMillis(2)));
 
-        boolean claimed = repository.claimForResume("apr-claim3", Instant.now());
+        boolean claimed = repository.claimForResume("apr-claim3", BASE.plusMillis(2));
 
         assertThat(claimed).isFalse();
     }
@@ -209,11 +211,11 @@ class JdbcApprovalRepositoryTest {
     void claimForResumeOnPendingReturnsFalse() {
         seedSessionAndRun("sess-claim4", "run-claim4");
         ApprovalRequest request = ApprovalRequest.pending(
-            "apr-claim4", "run-claim4", "sess-claim4", "tc-1", "shell_command", "args", Instant.now()
+            "apr-claim4", "run-claim4", "sess-claim4", "tc-1", "shell_command", "args", BASE
         );
         repository.save(request);
 
-        boolean claimed = repository.claimForResume("apr-claim4", Instant.now());
+        boolean claimed = repository.claimForResume("apr-claim4", BASE.plusMillis(1));
 
         assertThat(claimed).isFalse();
     }
@@ -222,12 +224,12 @@ class JdbcApprovalRepositoryTest {
     void claimForResumeOnRejectedReturnsFalse() {
         seedSessionAndRun("sess-claim5", "run-claim5");
         ApprovalRequest request = ApprovalRequest.pending(
-            "apr-claim5", "run-claim5", "sess-claim5", "tc-1", "shell_command", "args", Instant.now()
+            "apr-claim5", "run-claim5", "sess-claim5", "tc-1", "shell_command", "args", BASE
         );
         repository.save(request);
-        repository.update(request.reject("no", Instant.now()));
+        repository.update(request.reject("no", BASE.plusMillis(1)));
 
-        boolean claimed = repository.claimForResume("apr-claim5", Instant.now());
+        boolean claimed = repository.claimForResume("apr-claim5", BASE.plusMillis(1));
 
         assertThat(claimed).isFalse();
     }
@@ -236,12 +238,12 @@ class JdbcApprovalRepositoryTest {
     void claimForResumeOnExpiredReturnsFalse() {
         seedSessionAndRun("sess-claim6", "run-claim6");
         ApprovalRequest request = ApprovalRequest.pending(
-            "apr-claim6", "run-claim6", "sess-claim6", "tc-1", "shell_command", "args", Instant.now()
+            "apr-claim6", "run-claim6", "sess-claim6", "tc-1", "shell_command", "args", BASE
         );
         repository.save(request);
-        repository.update(request.expire(Instant.now()));
+        repository.update(request.expire(BASE.plusMillis(1)));
 
-        boolean claimed = repository.claimForResume("apr-claim6", Instant.now());
+        boolean claimed = repository.claimForResume("apr-claim6", BASE.plusMillis(1));
 
         assertThat(claimed).isFalse();
     }
@@ -250,21 +252,21 @@ class JdbcApprovalRepositoryTest {
     void concurrentClaimForResumeOnlyOneSucceeds() throws Exception {
         seedSessionAndRun("sess-conc", "run-conc");
         ApprovalRequest request = ApprovalRequest.pending(
-            "apr-conc", "run-conc", "sess-conc", "tc-1", "shell_command", "args", Instant.now()
+            "apr-conc", "run-conc", "sess-conc", "tc-1", "shell_command", "args", BASE
         );
         repository.save(request);
-        repository.update(request.approve("ok", Instant.now()));
+        repository.update(request.approve("ok", BASE.plusMillis(1)));
 
         java.util.concurrent.CountDownLatch latch = new java.util.concurrent.CountDownLatch(1);
         java.util.concurrent.ExecutorService executor = java.util.concurrent.Executors.newFixedThreadPool(2);
         try {
             java.util.concurrent.Future<Boolean> f1 = executor.submit(() -> {
                 latch.await();
-                return repository.claimForResume("apr-conc", Instant.now());
+                return repository.claimForResume("apr-conc", BASE.plusMillis(1));
             });
             java.util.concurrent.Future<Boolean> f2 = executor.submit(() -> {
                 latch.await();
-                return repository.claimForResume("apr-conc", Instant.now());
+                return repository.claimForResume("apr-conc", BASE.plusMillis(1));
             });
             Thread.sleep(50);
             latch.countDown();
