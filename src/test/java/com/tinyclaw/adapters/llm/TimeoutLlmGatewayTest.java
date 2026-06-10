@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -22,13 +23,10 @@ class TimeoutLlmGatewayTest {
     @Test
     void returnsResponseWhenWithinTimeout() {
         LlmGateway delegate = req -> new LlmResponse("ok", List.of(), null);
-        ExecutorService executor = Executors.newSingleThreadExecutor();
-        try {
+        try (ExecutorService executor = Executors.newSingleThreadExecutor()) {
             TimeoutLlmGateway gateway = new TimeoutLlmGateway(delegate, 5, executor);
             LlmResponse response = gateway.generate(request);
             assertThat(response.content()).isEqualTo("ok");
-        } finally {
-            executor.shutdownNow();
         }
     }
 
@@ -47,10 +45,13 @@ class TimeoutLlmGatewayTest {
         ExecutorService executor = Executors.newSingleThreadExecutor();
         try {
             TimeoutLlmGateway gateway = new TimeoutLlmGateway(blockingGateway, 1, executor);
+            long startedAt = System.nanoTime();
             assertThatThrownBy(() -> gateway.generate(request))
                 .isInstanceOf(LlmException.class)
                 .satisfies(e -> assertThat(((LlmException) e).getErrorType()).isEqualTo(LlmErrorType.TIMEOUT))
                 .hasMessageContaining("timed out");
+            long elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAt);
+            assertThat(elapsedMs).isLessThan(2500L);
         } finally {
             latch.countDown();
             executor.shutdownNow();
@@ -63,29 +64,36 @@ class TimeoutLlmGatewayTest {
             throw new LlmException("boom", LlmErrorType.PROVIDER_REJECTED_REQUEST);
         };
 
-        ExecutorService executor = Executors.newSingleThreadExecutor();
-        try {
+        try (ExecutorService executor = Executors.newSingleThreadExecutor()) {
             TimeoutLlmGateway gateway = new TimeoutLlmGateway(failingGateway, 5, executor);
             assertThatThrownBy(() -> gateway.generate(request))
                 .isInstanceOf(LlmException.class)
                 .satisfies(e -> assertThat(((LlmException) e).getErrorType()).isEqualTo(LlmErrorType.PROVIDER_REJECTED_REQUEST));
+        }
+    }
+
+    @Test
+    void constructorRejectsNullDelegate() {
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        try {
+            assertThatThrownBy(() -> new TimeoutLlmGateway(null, 1, executor))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("delegate");
         } finally {
             executor.shutdownNow();
         }
     }
 
     @Test
-    void constructorRejectsNullDelegate() {
-        assertThatThrownBy(() -> new TimeoutLlmGateway(null, 1, Executors.newSingleThreadExecutor()))
-            .isInstanceOf(IllegalArgumentException.class)
-            .hasMessageContaining("delegate");
-    }
-
-    @Test
     void constructorRejectsNonPositiveTimeout() {
-        assertThatThrownBy(() -> new TimeoutLlmGateway(req -> null, 0, Executors.newSingleThreadExecutor()))
-            .isInstanceOf(IllegalArgumentException.class)
-            .hasMessageContaining("timeoutSeconds");
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        try {
+            assertThatThrownBy(() -> new TimeoutLlmGateway(req -> null, 0, executor))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("timeoutSeconds");
+        } finally {
+            executor.shutdownNow();
+        }
     }
 
     @Test

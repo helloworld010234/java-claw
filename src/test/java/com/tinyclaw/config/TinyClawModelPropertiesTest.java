@@ -13,7 +13,7 @@ class TinyClawModelPropertiesTest {
 
         assertThat(props.isEnabled()).isFalse();
         assertThat(props.getProvider()).isEqualTo("spring-ai");
-        assertThat(props.getName()).isEqualTo("glm-4.5-air");
+        assertThat(props.getName()).isEqualTo("deepseek-v4-flash");
         assertThat(props.getBaseUrl()).isEmpty();
         assertThat(props.getApiKey()).isEmpty();
         assertThat(props.getTemperature()).isEqualTo(0.7);

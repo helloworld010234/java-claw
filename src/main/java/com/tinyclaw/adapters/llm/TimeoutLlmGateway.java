@@ -1,6 +1,4 @@
 package com.tinyclaw.adapters.llm;
-
-import com.tinyclaw.config.TinyClawModelProperties;
 import com.tinyclaw.ports.llm.LlmErrorType;
 import com.tinyclaw.ports.llm.LlmException;
 import com.tinyclaw.ports.llm.LlmGateway;
@@ -9,27 +7,21 @@ import com.tinyclaw.ports.llm.LlmResponse;
 
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Decorator that enforces a hard timeout on every LLM call.
+ * Decorator that enforces a caller-visible timeout on every LLM call.
  *
  * <p>If the delegate does not complete within the configured duration,
- * the call is cancelled and a typed {@link LlmException} with {@link LlmErrorType#TIMEOUT}
- * is thrown.</p>
+ * the caller receives a typed {@link LlmException} with {@link LlmErrorType#TIMEOUT}.
+ * Whether the underlying request is actually interrupted still depends on the
+ * delegate and its HTTP client honoring interruption or their own transport-level timeouts.</p>
  */
 public class TimeoutLlmGateway implements LlmGateway {
 
     private final LlmGateway delegate;
     private final long timeoutSeconds;
     private final ExecutorService executor;
-
-    public TimeoutLlmGateway(LlmGateway delegate, TinyClawModelProperties properties) {
-        this(delegate,
-            properties != null ? properties.getRequestTimeoutSeconds() : 60,
-            Executors.newCachedThreadPool());
-    }
 
     public TimeoutLlmGateway(LlmGateway delegate, long timeoutSeconds, ExecutorService executor) {
         if (delegate == null) {

@@ -105,16 +105,21 @@ public final class LlmErrorClassifier {
     private static String sanitiseMessage(Throwable cause, LlmErrorType type) {
         String raw = cause.getMessage() != null ? cause.getMessage() : cause.getClass().getSimpleName();
 
-        // Strip anything that looks like an API key or Authorization header
+        // Strip anything that looks like an API key, Authorization header, or standalone token
         String cleaned = raw
-            .replaceAll("(?i)(api[_-]?key[:=]?\\s*)[a-zA-Z0-9_\\-]{20,}", "$1<redacted>")
-            .replaceAll("(?i)(authorization[:=]?\\s+).*", "$1<redacted>")
-            .replaceAll("(?i)(bearer\\s+)\\S+", "$1<redacted>");
+            // api_key=..., api-key=..., apikey=... (with or without separator)
+            .replaceAll("(?i)(api[_-]?key\\s*[:=]\\s*)[^\\s&,)\"']{8,}", "$1<redacted>")
+            // Authorization: Bearer ... (replace only the token part, keep header name)
+            .replaceAll("(?i)(authorization\\s*[:=]\\s+(?:bearer\\s+))[^\\s&,)\"']+", "$1<redacted>")
+            // standalone bearer token (e.g. in JSON bodies or query strings)
+            .replaceAll("(?i)(\"?bearer\"?\\s*[:=]?\\s*)[^\\s&,)\"']+", "$1<redacted>")
+            // standalone sk- prefixed keys (common OpenAI / DeepSeek key format)
+            .replaceAll("(?i)(sk-[a-zA-Z0-9_-]{10,})", "<redacted>");
 
         return switch (type) {
             case TIMEOUT -> "LLM request timed out";
-            case AUTHENTICATION -> "LLM authentication failed";
-            case RATE_LIMIT -> "LLM rate limit exceeded";
+            case AUTHENTICATION -> "LLM authentication failed: " + cleaned;
+            case RATE_LIMIT -> "LLM rate limit exceeded: " + cleaned;
             case TRANSIENT_NETWORK -> "LLM network error: " + cleaned;
             case PROVIDER_REJECTED_REQUEST -> "LLM provider rejected request: " + cleaned;
             case CONFIGURATION -> "LLM configuration error: " + cleaned;

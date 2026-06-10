@@ -14,3 +14,11 @@ spring:
     openai:
       api-key: dummy-key-for-test-only
       base-url: http://localhost:12345
+
+tiny-claw:
+  model:
+    api-key: dummy-key-for-test-only
+    base-url: http://localhost:12345
+    request-timeout-seconds: 2
+    max-retry-attempts: 0
+    retry-backoff-ms: 0

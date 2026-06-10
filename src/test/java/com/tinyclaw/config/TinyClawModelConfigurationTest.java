@@ -1,7 +1,6 @@
 package com.tinyclaw.config;
 
 import com.tinyclaw.ports.llm.LlmGateway;
-import com.tinyclaw.ports.persistence.UsageRepositoryPort;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
@@ -149,27 +148,34 @@ class TinyClawModelConfigurationTest {
     }
 
     @Test
-    void injectsUsageRepositoryWhenAvailable() {
+    void createsLlmGatewayWithoutExternalChatModelBean() {
         new ApplicationContextRunner()
             .withPropertyValues(
                 "tiny-claw.model.enabled=true",
                 "tiny-claw.model.api-key=sk-test",
-                "tiny-claw.model.name=test-model"
+                "tiny-claw.model.name=test-model",
+                "tiny-claw.model.base-url=http://localhost:19999"
             )
             .withConfiguration(AutoConfigurations.of(TinyClawModelConfiguration.class))
             .withUserConfiguration(MeterRegistryConfig.class)
-            .withBean(ChatModel.class, () -> mock(ChatModel.class))
-            .withBean(UsageRepositoryPort.class, () -> mock(UsageRepositoryPort.class))
             .withBean(TinyClawModelProperties.class, () -> {
                 TinyClawModelProperties p = new TinyClawModelProperties();
                 p.setEnabled(true);
                 p.setApiKey("sk-test");
                 p.setName("test-model");
+                p.setBaseUrl("http://localhost:19999");
                 return p;
             })
             .run(context -> {
                 assertThat(context).hasSingleBean(LlmGateway.class);
+                assertThat(context).hasBean("realLlmGateway");
             });
+    }
+
+    @Test
+    void tinyClawModelPropertiesHasDeepSeekV4FlashAsDefault() {
+        TinyClawModelProperties properties = new TinyClawModelProperties();
+        assertThat(properties.getName()).isEqualTo("deepseek-v4-flash");
     }
 
     @Test

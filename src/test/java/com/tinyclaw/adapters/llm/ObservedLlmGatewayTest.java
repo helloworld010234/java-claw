@@ -125,7 +125,7 @@ class ObservedLlmGatewayTest {
     }
 
     @Test
-    void persistsUsageWhenRepositoryProvidedAndEnabled() {
+    void doesNotPersistUsageToDbEvenWhenRepositoryProvided() {
         UsageRepositoryPort usageRepo = mock(UsageRepositoryPort.class);
         properties.setUsageCostSummaryEnabled(true);
 
@@ -137,7 +137,7 @@ class ObservedLlmGatewayTest {
         LlmRequest request = new LlmRequest("test-model", List.of(), List.of(), com.tinyclaw.ports.llm.LlmRequestOptions.defaults());
         gateway.generate(request);
 
-        verify(usageRepo).save(any(UsageRecord.class));
+        verify(usageRepo, never()).save(any(UsageRecord.class));
     }
 
     @Test

@@ -141,4 +141,45 @@ class LlmErrorClassifierTest {
         LlmException ex = LlmErrorClassifier.classify(new RuntimeException("Something weird"));
         assertThat(ex.getErrorType()).isEqualTo(LlmErrorType.UNKNOWN);
     }
+
+    @Test
+    void sanitisesStandaloneApiKeyWithEquals() {
+        LlmException ex = LlmErrorClassifier.classify(
+            new RuntimeException("Request failed: api_key=sk-abc123def456"));
+        assertThat(ex.getMessage()).contains("<redacted>");
+        assertThat(ex.getMessage()).doesNotContain("sk-abc123def456");
+    }
+
+    @Test
+    void sanitisesStandaloneSkToken() {
+        LlmException ex = LlmErrorClassifier.classify(
+            new RuntimeException("Provider error for token sk-live-1234567890abcdef"));
+        assertThat(ex.getMessage()).contains("<redacted>");
+        assertThat(ex.getMessage()).doesNotContain("sk-live-1234567890abcdef");
+    }
+
+    @Test
+    void sanitisesLowerCaseBearerToken() {
+        LlmException ex = LlmErrorClassifier.classify(
+            new RuntimeException("Invalid bearer token: bearer sk-lower-1234567890"));
+        assertThat(ex.getMessage()).contains("<redacted>");
+        assertThat(ex.getMessage()).doesNotContain("sk-lower-1234567890");
+    }
+
+    @Test
+    void sanitisesAuthorizationBearerToken() {
+        LlmException ex = LlmErrorClassifier.classify(
+            new RuntimeException("401 Unauthorized: Authorization: Bearer sk-auth-1234567890abcdef"));
+        assertThat(ex.getMessage()).contains("<redacted>");
+        assertThat(ex.getMessage()).doesNotContain("sk-auth-1234567890abcdef");
+    }
+
+    @Test
+    void retainsDiagnosticInfoAfterSanitisation() {
+        LlmException ex = LlmErrorClassifier.classify(
+            new RuntimeException("500 Server Error: api_key=sk-secret token"));
+        assertThat(ex.getMessage()).contains("500");
+        assertThat(ex.getMessage()).contains("Server Error");
+        assertThat(ex.getMessage()).contains("<redacted>");
+    }
 }

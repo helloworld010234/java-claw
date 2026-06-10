@@ -1,6 +1,4 @@
 package com.tinyclaw.adapters.llm;
-
-import com.tinyclaw.application.persistence.UsageRecord;
 import com.tinyclaw.config.TinyClawModelProperties;
 import com.tinyclaw.domain.message.Usage;
 import com.tinyclaw.ports.llm.LlmException;
@@ -14,7 +12,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.time.Instant;
-import java.util.UUID;
 
 /**
  * Decorator around an {@link LlmGateway} that records usage, latency, and estimated cost metrics.
@@ -22,7 +19,8 @@ import java.util.UUID;
  * <p>Delegates the actual LLM call and then publishes Micrometer metrics. If the delegate throws,
  * a failure metric is recorded and the exception is re-thrown.</p>
  *
- * <p>Optionally persists usage records via {@link UsageRepositoryPort} when enabled.</p>
+ * <p>A {@link UsageRepositoryPort} may be supplied for future phases, but the current implementation
+ * intentionally does not write {@code usage_records} until real run/session context is available.</p>
  */
 public class ObservedLlmGateway implements LlmGateway {
 
@@ -105,18 +103,12 @@ public class ObservedLlmGateway implements LlmGateway {
             if (usage == null) {
                 return;
             }
-            double cost = estimateCost(usage);
-            UsageRecord record = new UsageRecord(
-                UUID.randomUUID().toString(), // placeholder runId; real runId should flow from context in future
-                UUID.randomUUID().toString(), // placeholder sessionId
-                request.model() != null && !request.model().isBlank() ? request.model() : properties.getName(),
-                usage.promptTokens(),
-                usage.completionTokens(),
-                cost > 0 ? cost : null,
-                success,
-                startedAt
-            );
-            usageRepository.save(record);
+            // Usage DB persistence is intentionally disabled in this phase.
+            // Real runId/sessionId must flow from agent context before usage_records can be written
+            // safely (usage_records has FK constraints to agent_runs and agent_sessions).
+            if (usageRepository != null && !(usageRepository instanceof com.tinyclaw.adapters.persistence.NoOpUsageRepository)) {
+                log.warn("Usage repository was provided, but DB persistence is disabled in this phase. Skipping usage record save.");
+            }
         } catch (Exception ex) {
             log.warn("Failed to persist usage record: {}", ex.getMessage());
         }

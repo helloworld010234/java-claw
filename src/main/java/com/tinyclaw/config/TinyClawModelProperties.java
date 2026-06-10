@@ -12,7 +12,7 @@ public class TinyClawModelProperties {
 
     private boolean enabled = false;
     private String provider = "spring-ai";
-    private String name = "glm-4.5-air";
+    private String name = "deepseek-v4-flash";
     private String baseUrl = "";
     private String apiKey = "";
     private double temperature = 0.7;
