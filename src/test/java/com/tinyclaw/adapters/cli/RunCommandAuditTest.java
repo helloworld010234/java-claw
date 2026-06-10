@@ -2,6 +2,7 @@ package com.tinyclaw.adapters.cli;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tinyclaw.adapters.llm.fake.FakeLlmGateway;
+import com.tinyclaw.adapters.persistence.JdbcApprovalRepository;
 import com.tinyclaw.adapters.persistence.JdbcMessageRepository;
 import com.tinyclaw.adapters.persistence.JdbcRunRepository;
 import com.tinyclaw.adapters.persistence.JdbcToolExecutionRepository;
@@ -11,6 +12,7 @@ import com.tinyclaw.adapters.tools.command.ShellCommandTool;
 import com.tinyclaw.adapters.tools.filesystem.EditFileTool;
 import com.tinyclaw.adapters.tools.filesystem.ReadFileTool;
 import com.tinyclaw.adapters.tools.filesystem.WriteFileTool;
+import com.tinyclaw.application.approval.ApprovalGatePolicy;
 import com.tinyclaw.application.engine.AgentEngine;
 import com.tinyclaw.application.engine.PromptComposer;
 import com.tinyclaw.application.persistence.AgentMessageDto;
@@ -65,6 +67,9 @@ class RunCommandAuditTest {
 
     @Autowired
     private JdbcToolExecutionRepository toolExecutionRepository;
+
+    @Autowired
+    private JdbcApprovalRepository approvalRepository;
 
     private RunCommand command;
     private ByteArrayOutputStream out;
@@ -610,6 +615,204 @@ class RunCommandAuditTest {
 
         assertThat(exitCode).isEqualTo(2);
         assertThat(err.toString()).contains("Session").contains("36");
+    }
+
+    @Test
+    void planFileWithApprovalEnabledBlocksShellCommandAndCreatesPendingApproval() throws IOException {
+        String command = System.getProperty("os.name").toLowerCase().contains("windows")
+            ? "Write-Output 'plan-shell'"
+            : "echo plan-shell";
+        String plan = """
+            {
+              "stopOnError": true,
+              "steps": [
+                {"id": "shell-step", "tool": "shell_command", "args": {"command": "%s"}}
+              ]
+            }
+            """.formatted(command);
+        Path planFile = tempDir.resolve("approval-plan.json");
+        Files.writeString(planFile, plan);
+
+        ToolRegistry registry = new ToolRegistry(
+            List.of(
+                new ReadFileTool(),
+                new WriteFileTool(),
+                new EditFileTool(),
+                new ShellCommandTool()
+            ),
+            List.of(
+                new AllowAllPolicy(),
+                new DangerousCommandPolicy(),
+                new ApprovalGatePolicy(approvalRepository, List.of("shell_command"), java.time.Clock.systemUTC())
+            )
+        );
+        InMemorySessionService sessionService = new InMemorySessionService();
+        AgentEngine agentEngine = new AgentEngine(
+            request -> new LlmResponse("", List.of(), null),
+            registry, new PromptComposer(), new NoOpReporter(), sessionService
+        );
+        RunCommand approvalCommand = new RunCommand(
+            new ScriptedRunExecutor(registry, new ObjectMapper()),
+            agentEngine,
+            new ObjectMapper(),
+            sessionService,
+            runRepository,
+            messageRepository,
+            toolExecutionRepository
+        );
+
+        int exitCode = new CommandLine(approvalCommand).execute(
+            "--prompt", "plan shell",
+            "--dir", tempDir.toString(),
+            "--session", "audit-plan-approval",
+            "--plan-file", planFile.toString()
+        );
+        restoreStreams();
+
+        assertThat(exitCode).isEqualTo(1);
+        String runId = extractRunId(out.toString());
+        assertThat(runId).isNotNull();
+
+        AgentRunSummary run = runRepository.findById(runId).orElseThrow();
+        assertThat(run.status()).isEqualTo(AgentRunStatus.FAILED);
+
+        List<ToolExecutionRecord> executions = toolExecutionRepository.findByRunId(runId);
+        assertThat(executions).hasSize(1);
+        assertThat(executions.get(0).stepId()).isEqualTo("shell-step");
+        assertThat(executions.get(0).isError()).isTrue();
+        assertThat(executions.get(0).output()).contains("Approval required");
+        String approvalId = extractApprovalId(executions.get(0).output());
+        assertThat(approvalId).isNotBlank();
+
+        var approvals = approvalRepository.findByRunId(runId);
+        assertThat(approvals).hasSize(1);
+        assertThat(approvals.get(0).status().name()).isEqualTo("PENDING");
+        assertThat(approvals.get(0).toolCallId()).isEqualTo("shell-step");
+    }
+
+    @Test
+    void engineFakeWithApprovalEnabledBlocksShellCommandAndCreatesPendingApproval() {
+        ToolRegistry registry = new ToolRegistry(
+            List.of(
+                new ReadFileTool(),
+                new WriteFileTool(),
+                new EditFileTool(),
+                new ShellCommandTool()
+            ),
+            List.of(
+                new AllowAllPolicy(),
+                new DangerousCommandPolicy(),
+                new ApprovalGatePolicy(approvalRepository, List.of("shell_command"), java.time.Clock.systemUTC())
+            )
+        );
+        InMemorySessionService sessionService = new InMemorySessionService();
+        AgentEngine agentEngine = new AgentEngine(
+            request -> new LlmResponse("", List.of(), null),
+            registry, new PromptComposer(), new NoOpReporter(), sessionService
+        );
+        RunCommand approvalCommand = new RunCommand(
+            new ScriptedRunExecutor(registry, new ObjectMapper()),
+            agentEngine,
+            new ObjectMapper(),
+            sessionService,
+            runRepository,
+            messageRepository,
+            toolExecutionRepository
+        );
+
+        int exitCode = new CommandLine(approvalCommand).execute(
+            "--prompt", "run command",
+            "--dir", tempDir.toString(),
+            "--session", "audit-fake-approval",
+            "--engine", "fake"
+        );
+        restoreStreams();
+
+        assertThat(exitCode).isEqualTo(1);
+        String runId = extractRunId(out.toString());
+        assertThat(runId).isNotNull();
+
+        AgentRunSummary run = runRepository.findById(runId).orElseThrow();
+        assertThat(run.status()).isEqualTo(AgentRunStatus.FAILED);
+
+        List<ToolExecutionRecord> executions = toolExecutionRepository.findByRunId(runId);
+        assertThat(executions).hasSize(1);
+        assertThat(executions.get(0).isError()).isTrue();
+        assertThat(executions.get(0).output()).contains("Approval required");
+        String approvalId = extractApprovalId(executions.get(0).output());
+        assertThat(approvalId).isNotBlank();
+
+        var approvals = approvalRepository.findByRunId(runId);
+        assertThat(approvals).hasSize(1);
+        assertThat(approvals.get(0).status().name()).isEqualTo("PENDING");
+    }
+
+    private String extractApprovalId(String output) {
+        if (output.contains("Approval required:")) {
+            return output.substring(output.lastIndexOf(':') + 1).trim();
+        }
+        return "";
+    }
+
+    @Test
+    void planFileDangerousCommandWithApprovalGateDoesNotCreateApproval() throws IOException {
+        String plan = """
+            {
+              "stopOnError": true,
+              "steps": [
+                {"id": "danger-step", "tool": "shell_command", "args": {"command": "rm -rf /"}}
+              ]
+            }
+            """;
+        Path planFile = tempDir.resolve("danger-approval-plan.json");
+        Files.writeString(planFile, plan);
+
+        ToolRegistry registry = new ToolRegistry(
+            List.of(
+                new ReadFileTool(),
+                new WriteFileTool(),
+                new EditFileTool(),
+                new ShellCommandTool()
+            ),
+            List.of(
+                new DangerousCommandPolicy(),
+                new ApprovalGatePolicy(approvalRepository, List.of("shell_command"), java.time.Clock.systemUTC())
+            )
+        );
+        InMemorySessionService sessionService = new InMemorySessionService();
+        AgentEngine agentEngine = new AgentEngine(
+            request -> new LlmResponse("", List.of(), null),
+            registry, new PromptComposer(), new NoOpReporter(), sessionService
+        );
+        RunCommand dangerCommand = new RunCommand(
+            new ScriptedRunExecutor(registry, new ObjectMapper()),
+            agentEngine,
+            new ObjectMapper(),
+            sessionService,
+            runRepository,
+            messageRepository,
+            toolExecutionRepository
+        );
+
+        int exitCode = new CommandLine(dangerCommand).execute(
+            "--prompt", "plan danger",
+            "--dir", tempDir.toString(),
+            "--session", "audit-danger-approval",
+            "--plan-file", planFile.toString()
+        );
+        restoreStreams();
+
+        assertThat(exitCode).isEqualTo(1);
+        String runId = extractRunId(out.toString());
+        assertThat(runId).isNotNull();
+
+        List<ToolExecutionRecord> executions = toolExecutionRepository.findByRunId(runId);
+        assertThat(executions).hasSize(1);
+        assertThat(executions.get(0).isError()).isTrue();
+        assertThat(executions.get(0).output()).contains("Dangerous command blocked");
+
+        var approvals = approvalRepository.findByRunId(runId);
+        assertThat(approvals).isEmpty();
     }
 
     @Test

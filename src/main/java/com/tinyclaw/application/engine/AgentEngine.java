@@ -47,12 +47,12 @@ public class AgentEngine {
         this(llmGateway, toolRegistry, promptComposer, reporter, sessionService, Clock.systemUTC());
     }
 
-    AgentEngine(LlmGateway llmGateway,
-                ToolRegistry toolRegistry,
-                PromptComposer promptComposer,
-                Reporter reporter,
-                SessionService sessionService,
-                Clock clock) {
+    public AgentEngine(LlmGateway llmGateway,
+                       ToolRegistry toolRegistry,
+                       PromptComposer promptComposer,
+                       Reporter reporter,
+                       SessionService sessionService,
+                       Clock clock) {
         this.llmGateway = DomainGuards.requireNonNull(llmGateway, "llmGateway");
         this.toolRegistry = DomainGuards.requireNonNull(toolRegistry, "toolRegistry");
         this.promptComposer = DomainGuards.requireNonNull(promptComposer, "promptComposer");

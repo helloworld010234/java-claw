@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tinyclaw.domain.common.DomainGuards;
 import com.tinyclaw.domain.message.ToolCall;
+import com.tinyclaw.ports.tool.ToolExecutionContext;
 import com.tinyclaw.ports.tool.ToolExecutionDecision;
 import com.tinyclaw.ports.tool.ToolExecutionPolicy;
 
@@ -44,7 +45,7 @@ public class DangerousCommandPolicy implements ToolExecutionPolicy {
     }
 
     @Override
-    public ToolExecutionDecision decide(ToolCall call) {
+    public ToolExecutionDecision decide(ToolCall call, ToolExecutionContext context) {
         String toolName = call.name();
 
         // Non-shell tools are always allowed for this policy

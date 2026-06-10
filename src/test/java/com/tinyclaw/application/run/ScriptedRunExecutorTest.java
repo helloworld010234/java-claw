@@ -2,9 +2,11 @@ package com.tinyclaw.application.run;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.tinyclaw.adapters.tools.command.ShellCommandTool;
 import com.tinyclaw.adapters.tools.filesystem.EditFileTool;
 import com.tinyclaw.adapters.tools.filesystem.ReadFileTool;
 import com.tinyclaw.adapters.tools.filesystem.WriteFileTool;
+import com.tinyclaw.application.approval.ApprovalGatePolicy;
 import com.tinyclaw.application.tool.ToolRegistry;
 import com.tinyclaw.domain.common.TinyClawDomainException;
 import com.tinyclaw.ports.tool.ToolExecutionContext;
@@ -153,5 +155,72 @@ class ScriptedRunExecutorTest {
         assertThatThrownBy(() -> new ScriptedRunStep("id", "read_file", null))
             .isInstanceOf(TinyClawDomainException.class)
             .hasMessageContaining("step args");
+    }
+
+    @Test
+    void approvalGateBlocksShellCommandAndStepFails() {
+        ToolRegistry registry = new ToolRegistry(List.of(
+            new ReadFileTool(),
+            new WriteFileTool(),
+            new EditFileTool(),
+            new ShellCommandTool()
+        ), List.of(
+            new ApprovalGatePolicy(new InMemoryApprovalRepository(), List.of("shell_command"), java.time.Clock.systemUTC())
+        ));
+        ScriptedRunExecutor executor = new ScriptedRunExecutor(registry, new ObjectMapper());
+
+        ScriptedRunPlan plan = new ScriptedRunPlan(true, List.of(
+            new ScriptedRunStep("shell-step", "shell_command", args("command", "echo hi"))
+        ));
+
+        ToolExecutionContext ctx = new ToolExecutionContext(tempDir, "run-1", "sess-1");
+        ScriptedRunResult result = executor.execute(plan, ctx, "run-1", "sess-1", null);
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.steps()).hasSize(1);
+        assertThat(result.steps().get(0).error()).isTrue();
+        assertThat(result.steps().get(0).output()).contains("Approval required");
+    }
+
+    private static class InMemoryApprovalRepository implements com.tinyclaw.ports.persistence.ApprovalRepositoryPort {
+        private final java.util.List<com.tinyclaw.domain.approval.ApprovalRequest> requests = new java.util.ArrayList<>();
+
+        @Override
+        public void save(com.tinyclaw.domain.approval.ApprovalRequest request) {
+            requests.add(request);
+        }
+
+        @Override
+        public java.util.Optional<com.tinyclaw.domain.approval.ApprovalRequest> findById(String id) {
+            return requests.stream().filter(r -> r.id().equals(id)).findFirst();
+        }
+
+        @Override
+        public java.util.Optional<com.tinyclaw.domain.approval.ApprovalRequest> findByRunIdAndToolCallId(String runId, String toolCallId) {
+            return requests.stream()
+                .filter(r -> r.runId().equals(runId) && r.toolCallId().equals(toolCallId))
+                .findFirst();
+        }
+
+        @Override
+        public java.util.List<com.tinyclaw.domain.approval.ApprovalRequest> findByRunId(String runId) {
+            return requests.stream().filter(r -> r.runId().equals(runId)).toList();
+        }
+
+        @Override
+        public java.util.List<com.tinyclaw.domain.approval.ApprovalRequest> findByStatus(com.tinyclaw.domain.approval.ApprovalStatus status) {
+            return requests.stream().filter(r -> r.status() == status).toList();
+        }
+
+        @Override
+        public java.util.List<com.tinyclaw.domain.approval.ApprovalRequest> findAll() {
+            return java.util.List.copyOf(requests);
+        }
+
+        @Override
+        public void update(com.tinyclaw.domain.approval.ApprovalRequest request) {
+            requests.removeIf(r -> r.id().equals(request.id()));
+            requests.add(request);
+        }
     }
 }

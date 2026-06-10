@@ -23,9 +23,9 @@ public final class ApprovalRequest {
     private final Instant requestedAt;
     private final Instant decidedAt;
 
-    private ApprovalRequest(String id, String runId, String sessionId, String toolCallId, String toolName,
-                            String argumentsPreview, ApprovalStatus status, String decisionReason,
-                            Instant requestedAt, Instant decidedAt) {
+    public ApprovalRequest(String id, String runId, String sessionId, String toolCallId, String toolName,
+                           String argumentsPreview, ApprovalStatus status, String decisionReason,
+                           Instant requestedAt, Instant decidedAt) {
         this.id = DomainGuards.requireNonBlank(id, "id");
         this.runId = DomainGuards.requireNonBlank(runId, "runId");
         this.sessionId = DomainGuards.requireNonBlank(sessionId, "sessionId");

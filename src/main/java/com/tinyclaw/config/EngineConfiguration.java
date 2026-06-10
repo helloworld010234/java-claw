@@ -14,6 +14,8 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+import java.time.Clock;
+
 /**
  * Spring configuration for agent engine components.
  *
@@ -23,6 +25,11 @@ import org.springframework.context.annotation.Configuration;
  */
 @Configuration
 public class EngineConfiguration {
+
+    @Bean
+    Clock clock() {
+        return Clock.systemUTC();
+    }
 
     @Bean
     PromptComposer promptComposer() {
@@ -57,7 +64,8 @@ public class EngineConfiguration {
                             ToolRegistry toolRegistry,
                             PromptComposer promptComposer,
                             Reporter reporter,
-                            SessionService sessionService) {
-        return new AgentEngine(llmGateway, toolRegistry, promptComposer, reporter, sessionService);
+                            SessionService sessionService,
+                            Clock clock) {
+        return new AgentEngine(llmGateway, toolRegistry, promptComposer, reporter, sessionService, clock);
     }
 }

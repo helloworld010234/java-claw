@@ -7,6 +7,7 @@ import com.tinyclaw.adapters.session.InMemorySessionService;
 import com.tinyclaw.adapters.tools.filesystem.ReadFileTool;
 import com.tinyclaw.adapters.tools.filesystem.WriteFileTool;
 import com.tinyclaw.adapters.tools.filesystem.WorkspacePathResolver;
+import com.tinyclaw.application.approval.ApprovalGatePolicy;
 import com.tinyclaw.application.tool.ToolRegistry;
 import com.tinyclaw.domain.message.Message;
 import com.tinyclaw.domain.message.ToolCall;
@@ -18,6 +19,9 @@ import com.tinyclaw.ports.llm.LlmException;
 import com.tinyclaw.ports.llm.LlmGateway;
 import com.tinyclaw.ports.llm.LlmRequest;
 import com.tinyclaw.ports.llm.LlmResponse;
+import com.tinyclaw.domain.approval.ApprovalRequest;
+import com.tinyclaw.domain.approval.ApprovalStatus;
+import com.tinyclaw.ports.persistence.ApprovalRepositoryPort;
 import com.tinyclaw.ports.persistence.ToolExecutionRepositoryPort;
 import com.tinyclaw.ports.reporter.Reporter;
 import com.tinyclaw.ports.session.SessionService;
@@ -395,11 +399,87 @@ class AgentEngineTest {
         // If no NPE was thrown and result is correct, backward compatibility is preserved
     }
 
+    @Test
+    void approvalGateBlocksToolAndRunFails() {
+        InMemoryApprovalRepository approvalRepo = new InMemoryApprovalRepository();
+        ToolRegistry gatedRegistry = new ToolRegistry(List.of(
+            new WriteFileTool(new WorkspacePathResolver(), new ObjectMapper())
+        ), List.of(
+            new ApprovalGatePolicy(approvalRepo, List.of("write_file"), clock)
+        ));
+
+        FakeLlmGateway fakeLlm = new FakeLlmGateway(List.of(
+            new LlmResponse("", List.of(
+                ToolCall.of("t1", "write_file", "{\"path\":\"out.txt\",\"content\":\"data\"}")
+            ), null),
+            new LlmResponse("Could not write", List.of(), null)
+        ));
+        AgentEngine engine = new AgentEngine(fakeLlm, gatedRegistry, promptComposer, reporter, sessionService, clock);
+
+        AgentRunResult result = engine.run(
+            startRun(3), createSession(), "Write a file",
+            new ToolExecutionContext(workspace, "run-1", "session-1")
+        );
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.errorReason()).contains("write_file").contains("failed");
+
+        List<Message> memory = sessionService.getWorkingMemory("session-1");
+        assertThat(memory).hasSize(4);
+        assertThat(memory.get(2).content()).contains("Approval required");
+
+        assertThat(approvalRepo.requests).hasSize(1);
+        assertThat(approvalRepo.requests.get(0).status()).isEqualTo(ApprovalStatus.PENDING);
+        assertThat(approvalRepo.requests.get(0).toolCallId()).isEqualTo("t1");
+    }
+
     private AgentRun startRun(int maxTurns) {
         return AgentRun.start("run-1", "session-1", maxTurns, clock.instant());
     }
 
     private Session createSession() {
         return Session.create("session-1", workspace.toAbsolutePath().toString(), clock.instant());
+    }
+
+    private static class InMemoryApprovalRepository implements ApprovalRepositoryPort {
+        final java.util.List<ApprovalRequest> requests = new java.util.ArrayList<>();
+
+        @Override
+        public void save(ApprovalRequest request) {
+            requests.add(request);
+        }
+
+        @Override
+        public java.util.Optional<ApprovalRequest> findById(String id) {
+            return requests.stream().filter(r -> r.id().equals(id)).findFirst();
+        }
+
+        @Override
+        public java.util.Optional<ApprovalRequest> findByRunIdAndToolCallId(String runId, String toolCallId) {
+            return requests.stream()
+                .filter(r -> r.runId().equals(runId) && r.toolCallId().equals(toolCallId))
+                .findFirst();
+        }
+
+        @Override
+        public java.util.List<ApprovalRequest> findByRunId(String runId) {
+            return requests.stream().filter(r -> r.runId().equals(runId)).toList();
+        }
+
+        @Override
+        public java.util.List<ApprovalRequest> findByStatus(ApprovalStatus status) {
+            return requests.stream().filter(r -> r.status() == status).toList();
+        }
+
+        @Override
+        public java.util.List<ApprovalRequest> findAll() {
+            return java.util.List.copyOf(requests);
+        }
+
+        @Override
+        public void update(ApprovalRequest request) {
+            requests.removeIf(r -> r.id().equals(request.id()));
+            requests.add(request);
+        }
     }
 }

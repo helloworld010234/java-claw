@@ -2,8 +2,11 @@ package com.tinyclaw.application.tool;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tinyclaw.domain.message.ToolCall;
+import com.tinyclaw.ports.tool.ToolExecutionContext;
 import com.tinyclaw.ports.tool.ToolExecutionDecision;
 import org.junit.jupiter.api.Test;
+
+import java.nio.file.Path;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -15,7 +18,7 @@ class DangerousCommandPolicyTest {
     void readFileIsAlwaysAllowed() {
         ToolCall call = ToolCall.of("t1", "read_file", "{\"path\":\"secret.txt\"}");
 
-        ToolExecutionDecision decision = policy.decide(call);
+        ToolExecutionDecision decision = policy.decide(call, new ToolExecutionContext(Path.of(".")));
 
         assertThat(decision.allowed()).isTrue();
     }
@@ -24,7 +27,7 @@ class DangerousCommandPolicyTest {
     void writeFileIsAllowedByThisPolicy() {
         ToolCall call = ToolCall.of("t1", "write_file", "{\"path\":\"x.txt\",\"content\":\"x\"}");
 
-        ToolExecutionDecision decision = policy.decide(call);
+        ToolExecutionDecision decision = policy.decide(call, new ToolExecutionContext(Path.of(".")));
 
         assertThat(decision.allowed()).isTrue();
     }
@@ -33,7 +36,7 @@ class DangerousCommandPolicyTest {
     void shellWithRmRfIsDenied() {
         ToolCall call = ToolCall.of("t1", "shell_command", "{\"command\":\"rm -rf /\"}");
 
-        ToolExecutionDecision decision = policy.decide(call);
+        ToolExecutionDecision decision = policy.decide(call, new ToolExecutionContext(Path.of(".")));
 
         assertThat(decision.allowed()).isFalse();
         assertThat(decision.reason()).contains("recursive delete");
@@ -43,7 +46,7 @@ class DangerousCommandPolicyTest {
     void shellWithRmRIsDenied() {
         ToolCall call = ToolCall.of("t1", "shell_command", "{\"command\":\"rm -r /home\"}");
 
-        ToolExecutionDecision decision = policy.decide(call);
+        ToolExecutionDecision decision = policy.decide(call, new ToolExecutionContext(Path.of(".")));
 
         assertThat(decision.allowed()).isFalse();
         assertThat(decision.reason()).contains("recursive delete");
@@ -53,7 +56,7 @@ class DangerousCommandPolicyTest {
     void shellWithDelSlashSIsDenied() {
         ToolCall call = ToolCall.of("t1", "shell_command", "{\"command\":\"del /s /q *\"}");
 
-        ToolExecutionDecision decision = policy.decide(call);
+        ToolExecutionDecision decision = policy.decide(call, new ToolExecutionContext(Path.of(".")));
 
         assertThat(decision.allowed()).isFalse();
         assertThat(decision.reason()).contains("recursive delete");
@@ -63,7 +66,7 @@ class DangerousCommandPolicyTest {
     void shellWithFormatIsDenied() {
         ToolCall call = ToolCall.of("t1", "shell_command", "{\"command\":\"format C:\"}");
 
-        ToolExecutionDecision decision = policy.decide(call);
+        ToolExecutionDecision decision = policy.decide(call, new ToolExecutionContext(Path.of(".")));
 
         assertThat(decision.allowed()).isFalse();
         assertThat(decision.reason()).contains("disk format");
@@ -73,7 +76,7 @@ class DangerousCommandPolicyTest {
     void shellWithShutdownIsDenied() {
         ToolCall call = ToolCall.of("t1", "shell_command", "{\"command\":\"shutdown now\"}");
 
-        ToolExecutionDecision decision = policy.decide(call);
+        ToolExecutionDecision decision = policy.decide(call, new ToolExecutionContext(Path.of(".")));
 
         assertThat(decision.allowed()).isFalse();
         assertThat(decision.reason()).contains("shutdown");
@@ -83,7 +86,7 @@ class DangerousCommandPolicyTest {
     void shellWithSystemctlIsDenied() {
         ToolCall call = ToolCall.of("t1", "shell_command", "{\"command\":\"systemctl restart nginx\"}");
 
-        ToolExecutionDecision decision = policy.decide(call);
+        ToolExecutionDecision decision = policy.decide(call, new ToolExecutionContext(Path.of(".")));
 
         assertThat(decision.allowed()).isFalse();
         assertThat(decision.reason()).contains("systemctl");
@@ -93,7 +96,7 @@ class DangerousCommandPolicyTest {
     void shellWithKillIsDenied() {
         ToolCall call = ToolCall.of("t1", "shell_command", "{\"command\":\"kill -9 1234\"}");
 
-        ToolExecutionDecision decision = policy.decide(call);
+        ToolExecutionDecision decision = policy.decide(call, new ToolExecutionContext(Path.of(".")));
 
         assertThat(decision.allowed()).isFalse();
         assertThat(decision.reason()).contains("kill");
@@ -103,7 +106,7 @@ class DangerousCommandPolicyTest {
     void shellWithSudoIsDenied() {
         ToolCall call = ToolCall.of("t1", "shell_command", "{\"command\":\"sudo apt update\"}");
 
-        ToolExecutionDecision decision = policy.decide(call);
+        ToolExecutionDecision decision = policy.decide(call, new ToolExecutionContext(Path.of(".")));
 
         assertThat(decision.allowed()).isFalse();
         assertThat(decision.reason()).contains("sudo");
@@ -113,7 +116,7 @@ class DangerousCommandPolicyTest {
     void shellWithRedirectToJavaSourceIsDenied() {
         ToolCall call = ToolCall.of("t1", "shell_command", "{\"command\":\"echo bad > *.java\"}");
 
-        ToolExecutionDecision decision = policy.decide(call);
+        ToolExecutionDecision decision = policy.decide(call, new ToolExecutionContext(Path.of(".")));
 
         assertThat(decision.allowed()).isFalse();
         assertThat(decision.reason()).contains("overwrite source");
@@ -123,7 +126,7 @@ class DangerousCommandPolicyTest {
     void benignShellCommandIsAllowed() {
         ToolCall call = ToolCall.of("t1", "shell_command", "{\"command\":\"ls -la\"}");
 
-        ToolExecutionDecision decision = policy.decide(call);
+        ToolExecutionDecision decision = policy.decide(call, new ToolExecutionContext(Path.of(".")));
 
         assertThat(decision.allowed()).isTrue();
     }
@@ -132,7 +135,7 @@ class DangerousCommandPolicyTest {
     void emptyArgsIsAllowed() {
         ToolCall call = ToolCall.of("t1", "shell_command", "{}");
 
-        ToolExecutionDecision decision = policy.decide(call);
+        ToolExecutionDecision decision = policy.decide(call, new ToolExecutionContext(Path.of(".")));
 
         assertThat(decision.allowed()).isTrue();
     }
@@ -143,7 +146,7 @@ class DangerousCommandPolicyTest {
     void unicodeEscapedRmRfIsDenied() {
         ToolCall call = ToolCall.of("t1", "shell_command", "{\"command\":\"\\u0072\\u006d -rf /\"}");
 
-        ToolExecutionDecision decision = policy.decide(call);
+        ToolExecutionDecision decision = policy.decide(call, new ToolExecutionContext(Path.of(".")));
 
         assertThat(decision.allowed()).isFalse();
         assertThat(decision.reason()).contains("recursive delete");
@@ -153,7 +156,7 @@ class DangerousCommandPolicyTest {
     void uppercaseRmRfIsDenied() {
         ToolCall call = ToolCall.of("t1", "shell_command", "{\"command\":\"RM -RF /\"}");
 
-        ToolExecutionDecision decision = policy.decide(call);
+        ToolExecutionDecision decision = policy.decide(call, new ToolExecutionContext(Path.of(".")));
 
         assertThat(decision.allowed()).isFalse();
         assertThat(decision.reason()).contains("recursive delete");
@@ -163,7 +166,7 @@ class DangerousCommandPolicyTest {
     void multipleWhitespaceRmRfIsDenied() {
         ToolCall call = ToolCall.of("t1", "shell_command", "{\"command\":\"rm    -rf /\"}");
 
-        ToolExecutionDecision decision = policy.decide(call);
+        ToolExecutionDecision decision = policy.decide(call, new ToolExecutionContext(Path.of(".")));
 
         assertThat(decision.allowed()).isFalse();
         assertThat(decision.reason()).contains("recursive delete");
@@ -173,7 +176,7 @@ class DangerousCommandPolicyTest {
     void unicodeEscapedSudoIsDenied() {
         ToolCall call = ToolCall.of("t1", "shell_command", "{\"command\":\"\\u0073\\u0075\\u0064\\u006f apt update\"}");
 
-        ToolExecutionDecision decision = policy.decide(call);
+        ToolExecutionDecision decision = policy.decide(call, new ToolExecutionContext(Path.of(".")));
 
         assertThat(decision.allowed()).isFalse();
         assertThat(decision.reason()).contains("sudo");
@@ -185,7 +188,7 @@ class DangerousCommandPolicyTest {
     void skillIsNotBlocked() {
         ToolCall call = ToolCall.of("t1", "shell_command", "{\"command\":\"echo skill check\"}");
 
-        ToolExecutionDecision decision = policy.decide(call);
+        ToolExecutionDecision decision = policy.decide(call, new ToolExecutionContext(Path.of(".")));
 
         assertThat(decision.allowed()).isTrue();
     }
@@ -194,7 +197,7 @@ class DangerousCommandPolicyTest {
     void pseudoIsNotBlocked() {
         ToolCall call = ToolCall.of("t1", "shell_command", "{\"command\":\"echo pseudo code\"}");
 
-        ToolExecutionDecision decision = policy.decide(call);
+        ToolExecutionDecision decision = policy.decide(call, new ToolExecutionContext(Path.of(".")));
 
         assertThat(decision.allowed()).isTrue();
     }
@@ -203,7 +206,7 @@ class DangerousCommandPolicyTest {
     void formatAsPartOfWordIsNotBlocked() {
         ToolCall call = ToolCall.of("t1", "shell_command", "{\"command\":\"echo formatted output\"}");
 
-        ToolExecutionDecision decision = policy.decide(call);
+        ToolExecutionDecision decision = policy.decide(call, new ToolExecutionContext(Path.of(".")));
 
         assertThat(decision.allowed()).isTrue();
     }
@@ -213,7 +216,7 @@ class DangerousCommandPolicyTest {
         // Wait, "echo systemctl restart" should still be blocked because systemctl is a standalone word
         ToolCall call = ToolCall.of("t1", "shell_command", "{\"command\":\"echo systemctl restart nginx\"}");
 
-        ToolExecutionDecision decision = policy.decide(call);
+        ToolExecutionDecision decision = policy.decide(call, new ToolExecutionContext(Path.of(".")));
 
         // This SHOULD be blocked because systemctl is a real command
         assertThat(decision.allowed()).isFalse();
@@ -229,7 +232,7 @@ class DangerousCommandPolicyTest {
     void invalidJsonIsAllowed() {
         ToolCall call = ToolCall.of("t1", "shell_command", "{not json");
 
-        ToolExecutionDecision decision = policy.decide(call);
+        ToolExecutionDecision decision = policy.decide(call, new ToolExecutionContext(Path.of(".")));
 
         assertThat(decision.allowed()).isTrue();
     }
@@ -238,7 +241,7 @@ class DangerousCommandPolicyTest {
     void nonStringCommandFieldIsAllowed() {
         ToolCall call = ToolCall.of("t1", "shell_command", "{\"command\":123}");
 
-        ToolExecutionDecision decision = policy.decide(call);
+        ToolExecutionDecision decision = policy.decide(call, new ToolExecutionContext(Path.of(".")));
 
         assertThat(decision.allowed()).isTrue();
     }

@@ -185,7 +185,7 @@ public class RunCommand implements Callable<Integer> {
             runRepository.saveRunStarted(run, "plan", prompt);
         }
 
-        ToolExecutionContext context = new ToolExecutionContext(workspace);
+        ToolExecutionContext context = new ToolExecutionContext(workspace).withRun(run.id(), session.id());
         ScriptedRunResult result = scriptedRunExecutor.execute(plan, context, run.id(), session.id(), toolExecutionRepository);
 
         if (result.success()) {
@@ -220,7 +220,7 @@ public class RunCommand implements Callable<Integer> {
         // Remember how many messages exist before engine runs
         int messagesBeforeCount = sessionService.getWorkingMemory(session.id()).size();
 
-        ToolExecutionContext context = new ToolExecutionContext(workspace);
+        ToolExecutionContext context = new ToolExecutionContext(workspace).withRun(run.id(), session.id());
         FakeLlmGateway fakeLlm = FakeLlmGateway.forPrompt(prompt);
         AgentEngine fakeEngine = agentEngine.withLlmGateway(fakeLlm);
         AgentRunResult result = fakeEngine.run(run, session, prompt, context, toolExecutionRepository);

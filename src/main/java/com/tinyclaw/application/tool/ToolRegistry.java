@@ -7,11 +7,11 @@ import com.tinyclaw.domain.message.ToolResult;
 import com.tinyclaw.ports.tool.AgentTool;
 import com.tinyclaw.ports.tool.ToolExecutionContext;
 import com.tinyclaw.ports.tool.ToolExecutionDecision;
+import com.tinyclaw.ports.tool.ToolExecutionDecisionType;
 import com.tinyclaw.ports.tool.ToolExecutionPolicy;
 
 import com.tinyclaw.domain.message.ToolDefinition;
 
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -65,8 +65,11 @@ public class ToolRegistry {
 
         // Evaluate policies in order
         for (ToolExecutionPolicy policy : policies) {
-            ToolExecutionDecision decision = policy.decide(call);
-            if (!decision.allowed()) {
+            ToolExecutionDecision decision = policy.decide(call, context);
+            if (decision.type() == ToolExecutionDecisionType.DENY) {
+                return ToolResult.failure(call.id(), decision.reason());
+            }
+            if (decision.type() == ToolExecutionDecisionType.REQUIRE_APPROVAL) {
                 return ToolResult.failure(call.id(), decision.reason());
             }
         }

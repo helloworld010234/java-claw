@@ -1,6 +1,7 @@
 package com.tinyclaw.application.tool;
 
 import com.tinyclaw.domain.message.ToolCall;
+import com.tinyclaw.ports.tool.ToolExecutionContext;
 import com.tinyclaw.ports.tool.ToolExecutionDecision;
 import com.tinyclaw.ports.tool.ToolExecutionPolicy;
 
@@ -10,7 +11,7 @@ import com.tinyclaw.ports.tool.ToolExecutionPolicy;
 public class AllowAllPolicy implements ToolExecutionPolicy {
 
     @Override
-    public ToolExecutionDecision decide(ToolCall call) {
+    public ToolExecutionDecision decide(ToolCall call, ToolExecutionContext context) {
         return ToolExecutionDecision.allow();
     }
 }

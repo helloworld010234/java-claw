@@ -78,7 +78,7 @@ class ToolRegistryTest {
     @Test
     void policyAllowsExecution() {
         AgentTool tool = tool("read_file", ToolResult.success("call-1", "ok"));
-        ToolExecutionPolicy allowPolicy = call -> ToolExecutionDecision.allow();
+        ToolExecutionPolicy allowPolicy = (call, ctx) -> ToolExecutionDecision.allow();
         ToolRegistry registry = new ToolRegistry(List.of(tool), List.of(allowPolicy));
 
         ToolResult result = registry.execute(ToolCall.of("call-1", "read_file", "{}"), CONTEXT);
@@ -90,7 +90,7 @@ class ToolRegistryTest {
     @Test
     void policyRejectsExecutionWithoutCallingTool() {
         SpyTool spyTool = spyTool("read_file", ToolResult.success("call-1", "should-not-run"));
-        ToolExecutionPolicy denyPolicy = call -> ToolExecutionDecision.deny("Blocked by test policy");
+        ToolExecutionPolicy denyPolicy = (call, ctx) -> ToolExecutionDecision.deny("Blocked by test policy");
         ToolRegistry registry = new ToolRegistry(List.of(spyTool), List.of(denyPolicy));
 
         ToolResult result = registry.execute(ToolCall.of("call-1", "read_file", "{}"), CONTEXT);
@@ -103,8 +103,8 @@ class ToolRegistryTest {
     @Test
     void multiplePoliciesEvaluatedInOrder() {
         AgentTool tool = tool("read_file", ToolResult.success("call-1", "ok"));
-        ToolExecutionPolicy allowPolicy = call -> ToolExecutionDecision.allow();
-        ToolExecutionPolicy denyPolicy = call -> ToolExecutionDecision.deny("Second policy blocks");
+        ToolExecutionPolicy allowPolicy = (call, ctx) -> ToolExecutionDecision.allow();
+        ToolExecutionPolicy denyPolicy = (call, ctx) -> ToolExecutionDecision.deny("Second policy blocks");
         ToolRegistry registry = new ToolRegistry(List.of(tool), List.of(allowPolicy, denyPolicy));
 
         ToolResult result = registry.execute(ToolCall.of("call-1", "read_file", "{}"), CONTEXT);
@@ -116,8 +116,8 @@ class ToolRegistryTest {
     @Test
     void firstRejectionWinsAndSkipsRemainingPolicies() {
         AgentTool tool = tool("read_file", ToolResult.success("call-1", "ok"));
-        ToolExecutionPolicy denyPolicy = call -> ToolExecutionDecision.deny("First blocks");
-        ToolExecutionPolicy secondPolicy = call -> {
+        ToolExecutionPolicy denyPolicy = (call, ctx) -> ToolExecutionDecision.deny("First blocks");
+        ToolExecutionPolicy secondPolicy = (call, ctx) -> {
             throw new AssertionError("Should not be called");
         };
         ToolRegistry registry = new ToolRegistry(List.of(tool), List.of(denyPolicy, secondPolicy));

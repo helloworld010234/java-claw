@@ -21,7 +21,7 @@ import java.util.Set;
 @Component
 public class CliRunner implements CommandLineRunner, ExitCodeGenerator {
 
-    private static final Set<String> KNOWN_COMMANDS = Set.of("run", "tool", "runs");
+    private static final Set<String> KNOWN_COMMANDS = Set.of("run", "tool", "runs", "approvals");
     private static final Set<String> SPRING_PREFIXES = Set.of(
         "--spring.", "--server.", "--management.", "--logging."
     );
