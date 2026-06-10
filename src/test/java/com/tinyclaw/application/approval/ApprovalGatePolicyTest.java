@@ -90,21 +90,18 @@ class ApprovalGatePolicyTest {
     }
 
     @Test
-    void dangerousCommandDenyTakesPriorityOverApprovalGate() {
-        // Simulate registry order: dangerous command policy first, then approval gate
-        // When dangerous command policy denies, approval gate should never be reached.
-        // This test verifies approval gate itself does not create an approval for a dangerous command
-        // when called independently (which shouldn't happen in real registry order).
+    void approvalGateCreatesRequestForConfiguredToolWithoutInspectingCommandSafety() {
+        // ApprovalGatePolicy independently does not inspect command safety.
+        // It only checks whether the tool name is in the required-tools list.
+        // Dangerous command priority is guaranteed by ToolRegistry ordering,
+        // verified in integration tests such as RunCommandAuditTest.
         ApprovalGatePolicy policy = new ApprovalGatePolicy(repository, List.of("shell_command"), clock);
         ToolCall call = ToolCall.of("t1", "shell_command", "{\"command\":\"rm -rf /\"}");
 
-        policy.decide(call, CONTEXT);
-        assertThat(repository.findAll()).hasSize(1);
+        ToolExecutionDecision decision = policy.decide(call, CONTEXT);
 
-        // In real ToolRegistry, dangerous command policy would run first and deny,
-        // so approval gate wouldn't be called. This test ensures that if approval gate
-        // IS called, it still creates a request (which is acceptable because the registry
-        // ordering is what guarantees priority).
+        assertThat(decision.requiresApproval()).isTrue();
+        assertThat(repository.findAll()).hasSize(1);
     }
 
     @Test

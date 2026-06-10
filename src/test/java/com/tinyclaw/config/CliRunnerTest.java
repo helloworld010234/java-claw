@@ -69,6 +69,44 @@ class CliRunnerTest {
     }
 
     @Test
+    void withTinyclawApprovalRequiredToolsEqualsFormShouldFilterAndNotFail(@TempDir Path tempDir) {
+        cliRunner.run(
+            "run", "--prompt", "Hello",
+            "--dir", tempDir.toString(),
+            "--session", "smoke",
+            "--spring.profiles.active=test",
+            "--spring.main.web-application-type=none",
+            "--tinyclaw.approval.required-tools=shell_command"
+        );
+        assertThat(cliRunner.getExitCode()).isNotEqualTo(2);
+    }
+
+    @Test
+    void withTinyclawApprovalRequiredToolsSpaceFormShouldFilterAndNotFail(@TempDir Path tempDir) {
+        cliRunner.run(
+            "run", "--prompt", "Hello",
+            "--dir", tempDir.toString(),
+            "--session", "smoke",
+            "--spring.profiles.active", "test",
+            "--spring.main.web-application-type", "none",
+            "--tinyclaw.approval.required-tools", "shell_command"
+        );
+        assertThat(cliRunner.getExitCode()).isNotEqualTo(2);
+    }
+
+    @Test
+    void businessArgsShouldNotBeFiltered(@TempDir Path tempDir) {
+        cliRunner.run(
+            "run", "--prompt", "Hello",
+            "--dir", tempDir.toString(),
+            "--session", "smoke",
+            "--engine", "fake",
+            "--spring.profiles.active=test"
+        );
+        assertThat(cliRunner.getExitCode()).isNotEqualTo(2);
+    }
+
+    @Test
     void toolWithUnknownNameShouldReturnOne(@TempDir Path tempDir) {
         cliRunner.run(
             "tool", "--name", "unknown", "--args", "{}",
@@ -149,5 +187,20 @@ class CliRunnerTest {
             "--spring.main.web-application-type=none"
         );
         assertThat(cliRunner.getExitCode()).isEqualTo(1);
+    }
+
+    @Test
+    void withMixedConfigPrefixesShouldFilterAll(@TempDir Path tempDir) {
+        cliRunner.run(
+            "run", "--prompt", "Hello",
+            "--dir", tempDir.toString(),
+            "--session", "smoke",
+            "--spring.profiles.active=test",
+            "--server.port=0",
+            "--management.endpoints.web.exposure.include=*",
+            "--logging.level.org.springframework=debug",
+            "--tinyclaw.approval.required-tools=shell_command"
+        );
+        assertThat(cliRunner.getExitCode()).isZero();
     }
 }

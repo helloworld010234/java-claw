@@ -43,4 +43,21 @@ class CliModeDetectorTest {
     void nullArgsReturnsFalse() {
         assertThat(CliModeDetector.isCliMode(null)).isFalse();
     }
+
+    @Test
+    void runWithTinyclawConfigArgIsCliMode() {
+        assertThat(CliModeDetector.isCliMode(new String[]{
+            "--tinyclaw.approval.required-tools=shell_command",
+            "run", "--prompt", "Hello"
+        })).isTrue();
+    }
+
+    @Test
+    void runWithTinyclawConfigArgBeforeCommandIsCliMode() {
+        assertThat(CliModeDetector.isCliMode(new String[]{
+            "--spring.profiles.active=test",
+            "--tinyclaw.approval.required-tools", "shell_command",
+            "run", "--prompt", "Hello"
+        })).isTrue();
+    }
 }

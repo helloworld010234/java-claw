@@ -22,8 +22,8 @@ import java.util.Set;
 public class CliRunner implements CommandLineRunner, ExitCodeGenerator {
 
     private static final Set<String> KNOWN_COMMANDS = Set.of("run", "tool", "runs", "approvals");
-    private static final Set<String> SPRING_PREFIXES = Set.of(
-        "--spring.", "--server.", "--management.", "--logging."
+    private static final Set<String> CONFIG_PROPERTY_PREFIXES = Set.of(
+        "--spring.", "--server.", "--management.", "--logging.", "--tinyclaw."
     );
 
     private final RootCommand rootCommand;
@@ -61,7 +61,7 @@ public class CliRunner implements CommandLineRunner, ExitCodeGenerator {
         int i = 0;
         while (i < args.length) {
             String arg = args[i];
-            if (isSpringBootProperty(arg)) {
+            if (isConfigProperty(arg)) {
                 // Handle space-separated format: --key value
                 if (!arg.contains("=") && i + 1 < args.length) {
                     i++;
@@ -75,11 +75,11 @@ public class CliRunner implements CommandLineRunner, ExitCodeGenerator {
         return result.toArray(new String[0]);
     }
 
-    private static boolean isSpringBootProperty(String arg) {
+    private static boolean isConfigProperty(String arg) {
         if (arg == null) {
             return false;
         }
-        for (String prefix : SPRING_PREFIXES) {
+        for (String prefix : CONFIG_PROPERTY_PREFIXES) {
             if (arg.startsWith(prefix)) {
                 return true;
             }
