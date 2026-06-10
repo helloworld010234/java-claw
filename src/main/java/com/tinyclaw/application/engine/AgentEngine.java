@@ -1,5 +1,6 @@
 package com.tinyclaw.application.engine;
 
+import com.tinyclaw.application.persistence.ToolExecutionRecord;
 import com.tinyclaw.application.tool.ToolRegistry;
 import com.tinyclaw.domain.common.DomainGuards;
 import com.tinyclaw.domain.message.Message;
@@ -12,6 +13,7 @@ import com.tinyclaw.ports.llm.LlmGateway;
 import com.tinyclaw.ports.llm.LlmRequest;
 import com.tinyclaw.ports.llm.LlmRequestOptions;
 import com.tinyclaw.ports.llm.LlmResponse;
+import com.tinyclaw.ports.persistence.ToolExecutionRepositoryPort;
 import com.tinyclaw.ports.reporter.Reporter;
 import com.tinyclaw.ports.session.SessionService;
 import com.tinyclaw.ports.tool.ToolExecutionContext;
@@ -20,6 +22,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 
 /**
  * Core ReAct agent engine.
@@ -76,6 +79,22 @@ public class AgentEngine {
      * @return the run result
      */
     public AgentRunResult run(AgentRun run, Session session, String userPrompt, ToolExecutionContext toolContext) {
+        return run(run, session, userPrompt, toolContext, null);
+    }
+
+    /**
+     * Execute a ReAct agent run with optional tool execution audit.
+     *
+     * @param run                      the run state machine
+     * @param session                  the session for message persistence
+     * @param userPrompt               the initial user prompt
+     * @param toolContext              shared tool execution context
+     * @param toolExecutionRepository  optional repository for tool execution audit
+     * @return the run result
+     */
+    public AgentRunResult run(AgentRun run, Session session, String userPrompt,
+                              ToolExecutionContext toolContext,
+                              ToolExecutionRepositoryPort toolExecutionRepository) {
         DomainGuards.requireNonNull(run, "run");
         DomainGuards.requireNonNull(session, "session");
         DomainGuards.requireNonNull(userPrompt, "userPrompt");
@@ -143,8 +162,27 @@ public class AgentEngine {
 
             for (ToolCall toolCall : response.toolCalls()) {
                 reporter.onToolCall(currentRun.id(), toolCall);
+                Instant startedAt = clock.instant();
                 ToolResult toolResult = toolRegistry.execute(toolCall, toolContext);
+                Instant completedAt = clock.instant();
                 reporter.onToolResult(currentRun.id(), toolResult);
+
+                if (toolExecutionRepository != null) {
+                    ToolExecutionRecord record = new ToolExecutionRecord(
+                        UUID.randomUUID().toString(),
+                        currentRun.id(),
+                        session.id(),
+                        toolCall.id(),
+                        toolCall.name(),
+                        toolCall.argumentsJson(),
+                        toolResult.output(),
+                        toolResult.error(),
+                        startedAt,
+                        completedAt
+                    );
+                    toolExecutionRepository.append(currentRun.id(), record);
+                }
+
                 if (toolResult.error()) {
                     anyToolFailed = true;
                     toolFailureReason = "Tool '" + toolCall.name() + "' failed: " + toolResult.output();

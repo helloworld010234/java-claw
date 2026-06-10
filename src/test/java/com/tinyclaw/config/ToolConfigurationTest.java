@@ -39,6 +39,11 @@ class ToolConfigurationTest {
     }
 
     @Test
+    void shellCommandToolIsRegistered() {
+        assertThat(toolRegistry.find("shell_command")).isPresent();
+    }
+
+    @Test
     void editFileExecutionWorksThroughRegistry(@TempDir Path workspace) throws IOException {
         Files.writeString(workspace.resolve("notes.txt"), "hello world");
 

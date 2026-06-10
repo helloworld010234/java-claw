@@ -324,7 +324,7 @@ class RunCommandAuditTest {
     }
 
     @Test
-    void engineFakeShellCommandSucceedsAndPersistsMessages() {
+    void engineFakeShellCommandSucceedsAndPersistsMessagesAndToolExecution() {
         int exitCode = commandLine().execute(
             "--prompt", "run command",
             "--dir", tempDir.toString(),
@@ -348,6 +348,12 @@ class RunCommandAuditTest {
         assertThat(messages.get(2).role()).isEqualTo(Role.USER);
         assertThat(messages.get(2).toolCallId()).isNotNull();
         assertThat(messages.get(3).role()).isEqualTo(Role.ASSISTANT);
+
+        List<ToolExecutionRecord> executions = toolExecutionRepository.findByRunId(runId);
+        assertThat(executions).hasSize(1);
+        assertThat(executions.get(0).toolName()).isEqualTo("shell_command");
+        assertThat(executions.get(0).isError()).isFalse();
+        assertThat(executions.get(0).output()).containsIgnoringCase("hello-from-shell");
     }
 
     // --- plan-file mode audit tests ---

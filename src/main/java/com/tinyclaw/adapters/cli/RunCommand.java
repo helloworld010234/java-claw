@@ -215,7 +215,7 @@ public class RunCommand implements Callable<Integer> {
         ToolExecutionContext context = new ToolExecutionContext(workspace);
         FakeLlmGateway fakeLlm = FakeLlmGateway.forPrompt(prompt);
         AgentEngine fakeEngine = agentEngine.withLlmGateway(fakeLlm);
-        AgentRunResult result = fakeEngine.run(run, session, prompt, context);
+        AgentRunResult result = fakeEngine.run(run, session, prompt, context, toolExecutionRepository);
 
         // Persist any new messages produced by the engine
         if (messageRepository != null) {

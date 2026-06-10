@@ -78,13 +78,39 @@ class ShellCommandToolTest {
     }
 
     @Test
-    void outputExceedingMaxCharsIsTruncated() {
-        // This is tested via the static truncate method; integration testing with
-        // actual shell commands is platform-dependent and slow.
-        String longOutput = "a".repeat(ShellCommandTool.MAX_OUTPUT_CHARS + 10);
-        String truncated = ShellCommandTool.truncate(longOutput);
-        assertThat(truncated).endsWith(ShellCommandTool.TRUNCATED_SUFFIX);
-        assertThat(truncated.length()).isEqualTo(ShellCommandTool.MAX_OUTPUT_CHARS + ShellCommandTool.TRUNCATED_SUFFIX.length());
+    void commandTimesOutAndReturnsFailure() {
+        ShellCommandTool shortTimeoutTool = new ShellCommandTool(new ObjectMapper(), 1);
+        String command = isWindows()
+            ? "Start-Sleep -Seconds 2"
+            : "sleep 2";
+        ToolCall call = ToolCall.of("c1", "shell_command", "{\"command\":\"" + command + "\"}");
+
+        ToolResult result = shortTimeoutTool.execute(call, new ToolExecutionContext(tempDir));
+
+        assertThat(result.error()).isTrue();
+        assertThat(result.output()).contains("timed out after 1 seconds");
+    }
+
+    @Test
+    void largeOutputIsTruncatedByRealProcess() throws Exception {
+        // Write a large file and cat it to generate > 8000 chars of stdout
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < ShellCommandTool.MAX_OUTPUT_CHARS + 500; i++) {
+            sb.append('x');
+        }
+        Files.writeString(tempDir.resolve("big.txt"), sb.toString());
+
+        String command = isWindows()
+            ? "Get-Content big.txt"
+            : "cat big.txt";
+        ToolCall call = ToolCall.of("c1", "shell_command", "{\"command\":\"" + command + "\"}");
+
+        ToolResult result = tool.execute(call, new ToolExecutionContext(tempDir));
+
+        assertThat(result.error()).isFalse();
+        assertThat(result.output()).contains(ShellCommandTool.TRUNCATED_SUFFIX);
+        assertThat(result.output().length())
+            .isLessThanOrEqualTo(ShellCommandTool.MAX_OUTPUT_CHARS + ShellCommandTool.TRUNCATED_SUFFIX.length());
     }
 
     @Test

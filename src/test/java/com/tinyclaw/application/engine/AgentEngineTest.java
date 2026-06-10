@@ -10,6 +10,7 @@ import com.tinyclaw.adapters.tools.filesystem.WorkspacePathResolver;
 import com.tinyclaw.application.tool.ToolRegistry;
 import com.tinyclaw.domain.message.Message;
 import com.tinyclaw.domain.message.ToolCall;
+import com.tinyclaw.application.persistence.ToolExecutionRecord;
 import com.tinyclaw.domain.message.ToolResult;
 import com.tinyclaw.domain.run.AgentRun;
 import com.tinyclaw.domain.session.Session;
@@ -17,6 +18,7 @@ import com.tinyclaw.ports.llm.LlmException;
 import com.tinyclaw.ports.llm.LlmGateway;
 import com.tinyclaw.ports.llm.LlmRequest;
 import com.tinyclaw.ports.llm.LlmResponse;
+import com.tinyclaw.ports.persistence.ToolExecutionRepositoryPort;
 import com.tinyclaw.ports.reporter.Reporter;
 import com.tinyclaw.ports.session.SessionService;
 import com.tinyclaw.ports.tool.ToolExecutionContext;
@@ -29,6 +31,7 @@ import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -295,6 +298,101 @@ class AgentEngineTest {
         List<Message> memory = sessionService.getWorkingMemory("session-1");
         assertThat(memory).hasSize(4);
         assertThat(memory.get(2).toolCallId()).isEqualTo("t1");
+    }
+
+    @Test
+    void persistsToolExecutionsWhenRepositoryProvided() throws Exception {
+        FakeLlmGateway fakeLlm = new FakeLlmGateway(List.of(
+            new LlmResponse("", List.of(
+                ToolCall.of("t1", "write_file", "{\"path\":\"out.txt\",\"content\":\"data\"}")
+            ), null),
+            new LlmResponse("done", List.of(), null)
+        ));
+        AgentEngine engine = new AgentEngine(fakeLlm, toolRegistry, promptComposer, reporter, sessionService, clock);
+
+        List<ToolExecutionRecord> captured = new ArrayList<>();
+        ToolExecutionRepositoryPort toolRepo = new ToolExecutionRepositoryPort() {
+            @Override
+            public void append(String runId, ToolExecutionRecord record) {
+                captured.add(record);
+            }
+            @Override
+            public List<ToolExecutionRecord> findByRunId(String runId) {
+                return List.of();
+            }
+        };
+
+        AgentRunResult result = engine.run(
+            startRun(3), createSession(), "Write a file",
+            new ToolExecutionContext(workspace), toolRepo
+        );
+
+        assertThat(result.success()).isTrue();
+        assertThat(captured).hasSize(1);
+        ToolExecutionRecord record = captured.get(0);
+        assertThat(record.runId()).isEqualTo("run-1");
+        assertThat(record.sessionId()).isEqualTo("session-1");
+        assertThat(record.toolName()).isEqualTo("write_file");
+        assertThat(record.stepId()).isEqualTo("t1");
+        assertThat(record.isError()).isFalse();
+        assertThat(record.startedAt()).isNotNull();
+        assertThat(record.completedAt()).isNotNull();
+        assertThat(record.completedAt()).isAfterOrEqualTo(record.startedAt());
+    }
+
+    @Test
+    void persistsFailedToolExecutionsWhenRepositoryProvided() {
+        FakeLlmGateway fakeLlm = new FakeLlmGateway(List.of(
+            new LlmResponse("", List.of(
+                ToolCall.of("t1", "read_file", "{\"path\":\"missing.txt\"}")
+            ), null),
+            new LlmResponse("Could not read", List.of(), null)
+        ));
+        AgentEngine engine = new AgentEngine(fakeLlm, toolRegistry, promptComposer, reporter, sessionService, clock);
+
+        List<ToolExecutionRecord> captured = new ArrayList<>();
+        ToolExecutionRepositoryPort toolRepo = new ToolExecutionRepositoryPort() {
+            @Override
+            public void append(String runId, ToolExecutionRecord record) {
+                captured.add(record);
+            }
+            @Override
+            public List<ToolExecutionRecord> findByRunId(String runId) {
+                return List.of();
+            }
+        };
+
+        AgentRunResult result = engine.run(
+            startRun(3), createSession(), "Read missing",
+            new ToolExecutionContext(workspace), toolRepo
+        );
+
+        assertThat(result.success()).isFalse();
+        assertThat(captured).hasSize(1);
+        ToolExecutionRecord record = captured.get(0);
+        assertThat(record.toolName()).isEqualTo("read_file");
+        assertThat(record.isError()).isTrue();
+        assertThat(record.output()).contains("File does not exist");
+    }
+
+    @Test
+    void doesNotPersistToolExecutionsWhenRepositoryNull() throws Exception {
+        FakeLlmGateway fakeLlm = new FakeLlmGateway(List.of(
+            new LlmResponse("", List.of(
+                ToolCall.of("t1", "write_file", "{\"path\":\"out.txt\",\"content\":\"data\"}")
+            ), null),
+            new LlmResponse("done", List.of(), null)
+        ));
+        AgentEngine engine = new AgentEngine(fakeLlm, toolRegistry, promptComposer, reporter, sessionService, clock);
+
+        // Call the 4-arg overload (repository = null)
+        AgentRunResult result = engine.run(
+            startRun(3), createSession(), "Write a file",
+            new ToolExecutionContext(workspace)
+        );
+
+        assertThat(result.success()).isTrue();
+        // If no NPE was thrown and result is correct, backward compatibility is preserved
     }
 
     private AgentRun startRun(int maxTurns) {
