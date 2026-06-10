@@ -69,7 +69,7 @@ class CliRunnerTest {
     }
 
     @Test
-    void withTinyclawApprovalRequiredToolsEqualsFormShouldFilterAndNotFail(@TempDir Path tempDir) {
+    void withTinyclawApprovalRequiredToolsEqualsFormShouldFilterFromPicocli(@TempDir Path tempDir) {
         cliRunner.run(
             "run", "--prompt", "Hello",
             "--dir", tempDir.toString(),
@@ -78,11 +78,11 @@ class CliRunnerTest {
             "--spring.main.web-application-type=none",
             "--tinyclaw.approval.required-tools=shell_command"
         );
-        assertThat(cliRunner.getExitCode()).isNotEqualTo(2);
+        assertThat(cliRunner.getExitCode()).isZero();
     }
 
     @Test
-    void withTinyclawApprovalRequiredToolsSpaceFormShouldFilterAndNotFail(@TempDir Path tempDir) {
+    void withTinyclawApprovalRequiredToolsSpaceFormIsFilteredFromPicocli(@TempDir Path tempDir) {
         cliRunner.run(
             "run", "--prompt", "Hello",
             "--dir", tempDir.toString(),
@@ -91,7 +91,7 @@ class CliRunnerTest {
             "--spring.main.web-application-type", "none",
             "--tinyclaw.approval.required-tools", "shell_command"
         );
-        assertThat(cliRunner.getExitCode()).isNotEqualTo(2);
+        assertThat(cliRunner.getExitCode()).isZero();
     }
 
     @Test
@@ -103,7 +103,7 @@ class CliRunnerTest {
             "--engine", "fake",
             "--spring.profiles.active=test"
         );
-        assertThat(cliRunner.getExitCode()).isNotEqualTo(2);
+        assertThat(cliRunner.getExitCode()).isZero();
     }
 
     @Test
