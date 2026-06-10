@@ -107,6 +107,15 @@ class RunCommandAuditTest {
         return new CommandLine(command);
     }
 
+    private String extractRunId(String output) {
+        for (String line : output.split("\n")) {
+            if (line.startsWith("runId:")) {
+                return line.substring("runId:".length()).trim();
+            }
+        }
+        return null;
+    }
+
     // --- fake mode audit tests ---
 
     @Test
@@ -120,20 +129,24 @@ class RunCommandAuditTest {
         restoreStreams();
 
         assertThat(exitCode).isZero();
+        String output = out.toString();
+        String runId = extractRunId(output);
+        assertThat(runId).isNotNull();
 
-        AgentRunSummary run = runRepository.findById("run-audit-fake-text").orElseThrow();
+        AgentRunSummary run = runRepository.findById(runId).orElseThrow();
         assertThat(run.status()).isEqualTo(AgentRunStatus.COMPLETED);
         assertThat(run.mode()).isEqualTo("agent");
         assertThat(run.prompt()).isEqualTo("hello");
 
-        List<AgentMessageDto> messages = messageRepository.findByRunId("run-audit-fake-text");
-        assertThat(messages).hasSizeGreaterThanOrEqualTo(2);
+        List<AgentMessageDto> messages = messageRepository.findByRunId(runId);
+        assertThat(messages).hasSize(2);
         assertThat(messages.get(0).role()).isEqualTo(Role.USER);
         assertThat(messages.get(0).content()).isEqualTo("hello");
+        assertThat(messages.get(1).role()).isEqualTo(Role.ASSISTANT);
     }
 
     @Test
-    void engineFakeToolSuccessPersistsToolObservation() {
+    void engineFakeToolSuccessPersistsFourMessages() {
         int exitCode = commandLine().execute(
             "--prompt", "write something",
             "--dir", tempDir.toString(),
@@ -143,18 +156,23 @@ class RunCommandAuditTest {
         restoreStreams();
 
         assertThat(exitCode).isZero();
+        String runId = extractRunId(out.toString());
+        assertThat(runId).isNotNull();
 
-        AgentRunSummary run = runRepository.findById("run-audit-fake-tool").orElseThrow();
+        AgentRunSummary run = runRepository.findById(runId).orElseThrow();
         assertThat(run.status()).isEqualTo(AgentRunStatus.COMPLETED);
 
-        List<AgentMessageDto> messages = messageRepository.findByRunId("run-audit-fake-tool");
-        boolean hasToolObservation = messages.stream()
-            .anyMatch(m -> m.role() == Role.USER && m.toolCallId() != null);
-        assertThat(hasToolObservation).isTrue();
+        List<AgentMessageDto> messages = messageRepository.findByRunId(runId);
+        assertThat(messages).hasSize(4);
+        assertThat(messages.get(0).role()).isEqualTo(Role.USER);
+        assertThat(messages.get(1).role()).isEqualTo(Role.ASSISTANT);
+        assertThat(messages.get(2).role()).isEqualTo(Role.USER);
+        assertThat(messages.get(2).toolCallId()).isNotNull();
+        assertThat(messages.get(3).role()).isEqualTo(Role.ASSISTANT);
     }
 
     @Test
-    void engineFakeToolFailureMarksRunAsFailed() {
+    void engineFakeToolFailurePersistsFourMessages() {
         int exitCode = commandLine().execute(
             "--prompt", "read missing",
             "--dir", tempDir.toString(),
@@ -164,10 +182,15 @@ class RunCommandAuditTest {
         restoreStreams();
 
         assertThat(exitCode).isEqualTo(1);
+        String runId = extractRunId(out.toString());
+        assertThat(runId).isNotNull();
 
-        AgentRunSummary run = runRepository.findById("run-audit-fake-fail").orElseThrow();
+        AgentRunSummary run = runRepository.findById(runId).orElseThrow();
         assertThat(run.status()).isEqualTo(AgentRunStatus.FAILED);
         assertThat(run.errorReason()).isNotBlank();
+
+        List<AgentMessageDto> messages = messageRepository.findByRunId(runId);
+        assertThat(messages).hasSize(4);
     }
 
     @Test
@@ -181,9 +204,82 @@ class RunCommandAuditTest {
         restoreStreams();
 
         assertThat(exitCode).isEqualTo(1);
+        String runId = extractRunId(out.toString());
+        assertThat(runId).isNotNull();
 
-        AgentRunSummary run = runRepository.findById("run-audit-fake-llm-fail").orElseThrow();
+        AgentRunSummary run = runRepository.findById(runId).orElseThrow();
         assertThat(run.status()).isEqualTo(AgentRunStatus.FAILED);
+    }
+
+    @Test
+    void engineFakePersistsActualTurnCount() {
+        // text success -> 1 turn
+        commandLine().execute(
+            "--prompt", "hello",
+            "--dir", tempDir.toString(),
+            "--session", "audit-turn-text",
+            "--engine", "fake"
+        );
+        restoreStreams();
+        String runId1 = extractRunId(out.toString());
+        AgentRunSummary run1 = runRepository.findById(runId1).orElseThrow();
+        assertThat(run1.turnCount()).isEqualTo(1);
+
+        // tool success -> 2 turns
+        setUp();
+        commandLine().execute(
+            "--prompt", "write something",
+            "--dir", tempDir.toString(),
+            "--session", "audit-turn-tool",
+            "--engine", "fake"
+        );
+        restoreStreams();
+        String runId2 = extractRunId(out.toString());
+        AgentRunSummary run2 = runRepository.findById(runId2).orElseThrow();
+        assertThat(run2.turnCount()).isEqualTo(2);
+
+        // tool failure -> 2 turns
+        setUp();
+        commandLine().execute(
+            "--prompt", "read missing",
+            "--dir", tempDir.toString(),
+            "--session", "audit-turn-fail",
+            "--engine", "fake"
+        );
+        restoreStreams();
+        String runId3 = extractRunId(out.toString());
+        AgentRunSummary run3 = runRepository.findById(runId3).orElseThrow();
+        assertThat(run3.turnCount()).isEqualTo(2);
+    }
+
+    @Test
+    void sameSessionCanRunTwice() {
+        String session = "audit-same-session";
+
+        int exitCode1 = commandLine().execute(
+            "--prompt", "hello one",
+            "--dir", tempDir.toString(),
+            "--session", session,
+            "--engine", "fake"
+        );
+        restoreStreams();
+        String runId1 = extractRunId(out.toString());
+        assertThat(exitCode1).isZero();
+
+        setUp();
+        int exitCode2 = commandLine().execute(
+            "--prompt", "hello two",
+            "--dir", tempDir.toString(),
+            "--session", session,
+            "--engine", "fake"
+        );
+        restoreStreams();
+        String runId2 = extractRunId(out.toString());
+        assertThat(exitCode2).isZero();
+
+        assertThat(runId1).isNotEqualTo(runId2);
+        assertThat(runRepository.findById(runId1)).isPresent();
+        assertThat(runRepository.findById(runId2)).isPresent();
     }
 
     // --- plan-file mode audit tests ---
@@ -211,12 +307,14 @@ class RunCommandAuditTest {
         restoreStreams();
 
         assertThat(exitCode).isZero();
+        String runId = extractRunId(out.toString());
+        assertThat(runId).isNotNull();
 
-        AgentRunSummary run = runRepository.findById("run-audit-plan-success").orElseThrow();
+        AgentRunSummary run = runRepository.findById(runId).orElseThrow();
         assertThat(run.status()).isEqualTo(AgentRunStatus.COMPLETED);
         assertThat(run.mode()).isEqualTo("plan");
 
-        List<ToolExecutionRecord> executions = toolExecutionRepository.findByRunId("run-audit-plan-success");
+        List<ToolExecutionRecord> executions = toolExecutionRepository.findByRunId(runId);
         assertThat(executions).hasSize(2);
         assertThat(executions.get(0).stepId()).isEqualTo("write-plan");
         assertThat(executions.get(1).stepId()).isEqualTo("read-plan");
@@ -246,14 +344,15 @@ class RunCommandAuditTest {
         restoreStreams();
 
         assertThat(exitCode).isEqualTo(1);
+        String runId = extractRunId(out.toString());
+        assertThat(runId).isNotNull();
 
-        AgentRunSummary run = runRepository.findById("run-audit-plan-fail").orElseThrow();
+        AgentRunSummary run = runRepository.findById(runId).orElseThrow();
         assertThat(run.status()).isEqualTo(AgentRunStatus.FAILED);
 
-        List<ToolExecutionRecord> executions = toolExecutionRepository.findByRunId("run-audit-plan-fail");
+        List<ToolExecutionRecord> executions = toolExecutionRepository.findByRunId(runId);
         assertThat(executions).hasSize(1);
         assertThat(executions.get(0).stepId()).isEqualTo("fail-step");
         assertThat(executions.get(0).isError()).isTrue();
     }
-
 }

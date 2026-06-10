@@ -4,6 +4,7 @@ import com.tinyclaw.application.persistence.AgentRunSummary;
 import com.tinyclaw.domain.run.AgentRun;
 import com.tinyclaw.domain.session.Session;
 
+import java.time.Instant;
 import java.util.Optional;
 
 /**
@@ -27,9 +28,19 @@ public interface RunRepositoryPort {
     void saveRunCompleted(AgentRun run);
 
     /**
+     * Mark a run as completed with explicit turn count.
+     */
+    void saveRunCompleted(String runId, int turnCount, Instant completedAt);
+
+    /**
      * Mark a run as failed with a reason.
      */
     void saveRunFailed(AgentRun run, String reason);
+
+    /**
+     * Mark a run as failed with explicit turn count.
+     */
+    void saveRunFailed(String runId, int turnCount, String reason, Instant completedAt);
 
     /**
      * Find a run summary by id.

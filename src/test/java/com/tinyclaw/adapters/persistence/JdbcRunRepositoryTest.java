@@ -36,6 +36,39 @@ class JdbcRunRepositoryTest {
     }
 
     @Test
+    void saveSessionShouldBeIdempotent() {
+        Instant firstTime = Instant.now();
+        Session session1 = Session.create("sess-idem", "/tmp/ws1", firstTime);
+        repository.saveSession(session1);
+
+        Instant secondTime = firstTime.plusSeconds(10);
+        Session session2 = Session.create("sess-idem", "/tmp/ws2", secondTime);
+        repository.saveSession(session2);
+
+        String workspace = jdbcTemplate.queryForObject(
+            "SELECT workspace_path FROM agent_sessions WHERE id = ?", String.class, "sess-idem");
+        assertThat(workspace).isEqualTo("/tmp/ws2");
+    }
+
+    @Test
+    void canSaveMultipleRunsForSameSession() {
+        Session session = Session.create("sess-multi", "/tmp/ws", Instant.now());
+        repository.saveSession(session);
+
+        AgentRun run1 = AgentRun.start("run-multi-1", "sess-multi", 5, Instant.now());
+        AgentRun run2 = AgentRun.start("run-multi-2", "sess-multi", 5, Instant.now());
+        repository.saveRunStarted(run1, "agent", "first");
+        repository.saveRunStarted(run2, "agent", "second");
+
+        Optional<AgentRunSummary> found1 = repository.findById("run-multi-1");
+        Optional<AgentRunSummary> found2 = repository.findById("run-multi-2");
+        assertThat(found1).isPresent();
+        assertThat(found2).isPresent();
+        assertThat(found1.get().prompt()).isEqualTo("first");
+        assertThat(found2.get().prompt()).isEqualTo("second");
+    }
+
+    @Test
     void saveRunStartedAndFind() {
         Session session = Session.create("sess-run", "/tmp/ws", Instant.now());
         repository.saveSession(session);
@@ -59,12 +92,12 @@ class JdbcRunRepositoryTest {
         AgentRun run = AgentRun.start("run-complete", "sess-complete", 5, Instant.now());
         repository.saveRunStarted(run, "plan", "do it");
 
-        AgentRun completed = run.complete(Instant.now());
-        repository.saveRunCompleted(completed);
+        repository.saveRunCompleted(run.id(), 3, Instant.now());
 
         Optional<AgentRunSummary> found = repository.findById("run-complete");
         assertThat(found).isPresent();
         assertThat(found.get().status()).isEqualTo(AgentRunStatus.COMPLETED);
+        assertThat(found.get().turnCount()).isEqualTo(3);
         assertThat(found.get().completedAt()).isNotNull();
     }
 
@@ -75,12 +108,12 @@ class JdbcRunRepositoryTest {
         AgentRun run = AgentRun.start("run-fail", "sess-fail", 5, Instant.now());
         repository.saveRunStarted(run, "agent", "fail me");
 
-        AgentRun failed = run.fail("tool broke", Instant.now());
-        repository.saveRunFailed(failed, "tool broke");
+        repository.saveRunFailed(run.id(), 2, "tool broke", Instant.now());
 
         Optional<AgentRunSummary> found = repository.findById("run-fail");
         assertThat(found).isPresent();
         assertThat(found.get().status()).isEqualTo(AgentRunStatus.FAILED);
+        assertThat(found.get().turnCount()).isEqualTo(2);
         assertThat(found.get().errorReason()).isEqualTo("tool broke");
     }
 

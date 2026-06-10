@@ -10,6 +10,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
 import java.sql.Timestamp;
+import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -27,17 +28,30 @@ public class JdbcRunRepository implements RunRepositoryPort {
 
     @Override
     public void saveSession(Session session) {
-        String sql = """
-            INSERT INTO agent_sessions (id, workspace_path, status, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?)
+        String updateSql = """
+            UPDATE agent_sessions
+            SET workspace_path = ?, status = ?, updated_at = ?
+            WHERE id = ?
             """;
-        jdbcTemplate.update(sql,
-            session.id(),
+        int updated = jdbcTemplate.update(updateSql,
             session.workDir(),
             session.status().name().toLowerCase(),
-            Timestamp.from(session.createdAt()),
-            Timestamp.from(session.updatedAt())
+            Timestamp.from(session.updatedAt()),
+            session.id()
         );
+        if (updated == 0) {
+            String insertSql = """
+                INSERT INTO agent_sessions (id, workspace_path, status, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                """;
+            jdbcTemplate.update(insertSql,
+                session.id(),
+                session.workDir(),
+                session.status().name().toLowerCase(),
+                Timestamp.from(session.createdAt()),
+                Timestamp.from(session.updatedAt())
+            );
+        }
     }
 
     @Override
@@ -61,34 +75,44 @@ public class JdbcRunRepository implements RunRepositoryPort {
 
     @Override
     public void saveRunCompleted(AgentRun run) {
+        saveRunCompleted(run.id(), run.currentTurn(), run.endedAt());
+    }
+
+    @Override
+    public void saveRunCompleted(String runId, int turnCount, Instant completedAt) {
         String sql = """
             UPDATE agent_runs
             SET status = ?, current_turn = ?, ended_at = ?, completed_at = ?
             WHERE id = ?
             """;
         jdbcTemplate.update(sql,
-            run.status().name().toLowerCase(),
-            run.currentTurn(),
-            run.endedAt() != null ? Timestamp.from(run.endedAt()) : null,
-            run.endedAt() != null ? Timestamp.from(run.endedAt()) : null,
-            run.id()
+            AgentRunStatus.COMPLETED.name().toLowerCase(),
+            turnCount,
+            completedAt != null ? Timestamp.from(completedAt) : null,
+            completedAt != null ? Timestamp.from(completedAt) : null,
+            runId
         );
     }
 
     @Override
     public void saveRunFailed(AgentRun run, String reason) {
+        saveRunFailed(run.id(), run.currentTurn(), reason, run.endedAt());
+    }
+
+    @Override
+    public void saveRunFailed(String runId, int turnCount, String reason, Instant completedAt) {
         String sql = """
             UPDATE agent_runs
             SET status = ?, current_turn = ?, error_reason = ?, ended_at = ?, completed_at = ?
             WHERE id = ?
             """;
         jdbcTemplate.update(sql,
-            run.status().name().toLowerCase(),
-            run.currentTurn(),
+            AgentRunStatus.FAILED.name().toLowerCase(),
+            turnCount,
             reason,
-            run.endedAt() != null ? Timestamp.from(run.endedAt()) : null,
-            run.endedAt() != null ? Timestamp.from(run.endedAt()) : null,
-            run.id()
+            completedAt != null ? Timestamp.from(completedAt) : null,
+            completedAt != null ? Timestamp.from(completedAt) : null,
+            runId
         );
     }
 

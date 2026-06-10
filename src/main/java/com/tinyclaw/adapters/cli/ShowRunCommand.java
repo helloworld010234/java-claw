@@ -59,10 +59,16 @@ public class ShowRunCommand implements Callable<Integer> {
         int messageCount = messageRepository != null ? messageRepository.findByRunId(runId).size() : 0;
         int toolExecutionCount = toolExecutionRepository != null ? toolExecutionRepository.findByRunId(runId).size() : 0;
 
+        String statusLabel = switch (run.status()) {
+            case COMPLETED -> "success";
+            case FAILED -> "failed";
+            default -> run.status().name().toLowerCase();
+        };
+
         System.out.println("runId: " + run.id());
         System.out.println("sessionId: " + run.sessionId());
         System.out.println("mode: " + (run.mode() != null ? run.mode() : "unknown"));
-        System.out.println("status: " + run.status().name().toLowerCase());
+        System.out.println("status: " + statusLabel);
         System.out.println("turns: " + run.turnCount());
         System.out.println("messages: " + messageCount);
         System.out.println("toolExecutions: " + toolExecutionCount);

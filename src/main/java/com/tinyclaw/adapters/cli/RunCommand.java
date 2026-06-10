@@ -170,8 +170,9 @@ public class RunCommand implements Callable<Integer> {
             return 2;
         }
 
+        String runId = newRunId(effectiveSessionId);
         Session session = Session.create(effectiveSessionId, workspace.toAbsolutePath().toString(), Instant.now());
-        AgentRun run = AgentRun.start("run-" + effectiveSessionId, effectiveSessionId, 5, Instant.now());
+        AgentRun run = AgentRun.start(runId, effectiveSessionId, 5, Instant.now());
 
         if (runRepository != null) {
             runRepository.saveSession(session);
@@ -181,11 +182,9 @@ public class RunCommand implements Callable<Integer> {
         ToolExecutionContext context = new ToolExecutionContext(workspace);
         ScriptedRunResult result = scriptedRunExecutor.execute(plan, context, run.id(), session.id(), toolExecutionRepository);
 
-        AgentRun finalRun;
         if (result.success()) {
-            finalRun = run.complete(Instant.now());
             if (runRepository != null) {
-                runRepository.saveRunCompleted(finalRun);
+                runRepository.saveRunCompleted(run.id(), 0, Instant.now());
             }
         } else {
             String errorReason = result.steps().stream()
@@ -193,28 +192,23 @@ public class RunCommand implements Callable<Integer> {
                 .findFirst()
                 .map(ScriptedRunStepResult::output)
                 .orElse("Plan execution failed");
-            finalRun = run.fail(errorReason, Instant.now());
             if (runRepository != null) {
-                runRepository.saveRunFailed(finalRun, errorReason);
+                runRepository.saveRunFailed(run.id(), 0, errorReason, Instant.now());
             }
         }
 
-        printPlanSummary(effectiveSessionId, workspace, result);
+        printPlanSummary(runId, effectiveSessionId, workspace, result);
         return result.success() ? 0 : 1;
     }
 
     private Integer runAgentEngine(String effectiveSessionId, Path workspace) {
+        String runId = newRunId(effectiveSessionId);
         Session session = Session.create(effectiveSessionId, workspace.toAbsolutePath().toString(), Instant.now());
-        AgentRun run = AgentRun.start("run-" + effectiveSessionId, effectiveSessionId, 5, Instant.now());
+        AgentRun run = AgentRun.start(runId, effectiveSessionId, 5, Instant.now());
 
         if (runRepository != null) {
             runRepository.saveSession(session);
             runRepository.saveRunStarted(run, "agent", prompt);
-        }
-
-        // Save user prompt message
-        if (messageRepository != null) {
-            messageRepository.append(run.id(), session.id(), Message.user(prompt));
         }
 
         // Remember which messages exist before engine runs
@@ -238,26 +232,27 @@ public class RunCommand implements Callable<Integer> {
                 }
                 String sig = messageSignature(m);
                 if (!messageSignaturesBefore.contains(sig)) {
-                    messageRepository.append(run.id(), session.id(), m);
+                    messageRepository.append(runId, session.id(), m);
                 }
             }
         }
 
-        AgentRun finalRun;
         if (result.success()) {
-            finalRun = run.complete(Instant.now());
             if (runRepository != null) {
-                runRepository.saveRunCompleted(finalRun);
+                runRepository.saveRunCompleted(run.id(), result.turnCount(), Instant.now());
             }
         } else {
-            finalRun = run.fail(result.errorReason(), Instant.now());
             if (runRepository != null) {
-                runRepository.saveRunFailed(finalRun, result.errorReason());
+                runRepository.saveRunFailed(run.id(), result.turnCount(), result.errorReason(), Instant.now());
             }
         }
 
-        printAgentSummary(effectiveSessionId, workspace, result);
+        printAgentSummary(runId, effectiveSessionId, workspace, result);
         return result.success() ? 0 : 1;
+    }
+
+    private String newRunId(String sessionId) {
+        return "run-" + sessionId + "-" + UUID.randomUUID().toString().substring(0, 8);
     }
 
     private String messageSignature(Message message) {
@@ -285,7 +280,8 @@ public class RunCommand implements Callable<Integer> {
         return path;
     }
 
-    private void printPlanSummary(String sessionId, Path workspace, ScriptedRunResult result) {
+    private void printPlanSummary(String runId, String sessionId, Path workspace, ScriptedRunResult result) {
+        System.out.println("runId: " + runId);
         System.out.println("sessionId: " + sessionId);
         System.out.println("workspace: " + workspace.toAbsolutePath());
         System.out.println("prompt: " + prompt);
@@ -300,7 +296,8 @@ public class RunCommand implements Callable<Integer> {
         }
     }
 
-    private void printAgentSummary(String sessionId, Path workspace, AgentRunResult result) {
+    private void printAgentSummary(String runId, String sessionId, Path workspace, AgentRunResult result) {
+        System.out.println("runId: " + runId);
         System.out.println("mode: agent");
         System.out.println("session: " + sessionId);
         System.out.println("workspace: " + workspace.toAbsolutePath());

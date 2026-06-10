@@ -63,7 +63,7 @@ class ShowRunCommandTest {
         AgentRun run = AgentRun.start("show-run", "show-sess", 3, Instant.now());
         runRepository.saveSession(session);
         runRepository.saveRunStarted(run, "agent", "test prompt");
-        runRepository.saveRunCompleted(run.complete(Instant.now()));
+        runRepository.saveRunCompleted(run.id(), 2, Instant.now());
 
         int exitCode = commandLine().execute("--run-id", "show-run");
         restoreStreams();
@@ -73,9 +73,27 @@ class ShowRunCommandTest {
         assertThat(output).contains("runId: show-run");
         assertThat(output).contains("sessionId: show-sess");
         assertThat(output).contains("mode: agent");
-        assertThat(output).contains("status: completed");
+        assertThat(output).contains("status: success");
+        assertThat(output).contains("turns: 2");
         assertThat(output).contains("messages:");
         assertThat(output).contains("toolExecutions:");
+    }
+
+    @Test
+    void showFailedRunOutputsStatusFailed() {
+        Session session = Session.create("show-fail-sess", "/tmp", Instant.now());
+        AgentRun run = AgentRun.start("show-fail-run", "show-fail-sess", 5, Instant.now());
+        runRepository.saveSession(session);
+        runRepository.saveRunStarted(run, "agent", "fail prompt");
+        runRepository.saveRunFailed(run.id(), 2, "something broke", Instant.now());
+
+        int exitCode = commandLine().execute("--run-id", "show-fail-run");
+        restoreStreams();
+
+        assertThat(exitCode).isZero();
+        String output = out.toString();
+        assertThat(output).contains("status: failed");
+        assertThat(output).contains("turns: 2");
     }
 
     @Test
