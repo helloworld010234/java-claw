@@ -27,6 +27,9 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 import java.time.Clock;
+import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Spring configuration for agent engine components.
@@ -110,6 +113,19 @@ public class EngineConfiguration {
     }
 
     @Bean
+    Executor toolExecutor(AgentProperties agentProperties) {
+        int threads = agentProperties.getToolExecutorThreads() > 0
+            ? agentProperties.getToolExecutorThreads()
+            : Math.max(2, Runtime.getRuntime().availableProcessors());
+        AtomicInteger counter = new AtomicInteger(0);
+        return Executors.newFixedThreadPool(threads, r -> {
+            Thread t = new Thread(r, "tinyclaw-tool-" + counter.incrementAndGet());
+            t.setDaemon(true);
+            return t;
+        });
+    }
+
+    @Bean
     AgentEngine agentEngine(LlmGateway llmGateway,
                             ToolRegistry toolRegistry,
                             PromptComposer promptComposer,
@@ -119,9 +135,10 @@ public class EngineConfiguration {
                             AgentContextBuilder agentContextBuilder,
                             ToolFailureRecoveryAdvisor toolFailureRecoveryAdvisor,
                             TraceReporter traceReporter,
-                            AgentProperties agentProperties) {
+                            AgentProperties agentProperties,
+                            Executor toolExecutor) {
         return new AgentEngine(llmGateway, toolRegistry, promptComposer, reporter, sessionService, clock,
             agentContextBuilder, toolFailureRecoveryAdvisor, null, traceReporter, agentProperties.getMaxToolCallsPerTurn(),
-            agentProperties.isEnableThinking());
+            agentProperties.isEnableThinking(), toolExecutor);
     }
 }

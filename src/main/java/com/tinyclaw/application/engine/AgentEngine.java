@@ -30,6 +30,10 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Core ReAct agent engine.
@@ -70,6 +74,9 @@ public class AgentEngine implements SubagentRunner {
     private final com.tinyclaw.ports.observability.TraceReporter traceReporter;
     private final int maxToolCallsPerTurn;
     private final boolean enableThinking;
+    private final Executor toolExecutor;
+
+    private static final AtomicInteger DEFAULT_THREAD_COUNTER = new AtomicInteger(0);
 
     public AgentEngine(LlmGateway llmGateway,
                        ToolRegistry toolRegistry,
@@ -168,6 +175,24 @@ public class AgentEngine implements SubagentRunner {
                        com.tinyclaw.ports.observability.TraceReporter traceReporter,
                        int maxToolCallsPerTurn,
                        boolean enableThinking) {
+        this(llmGateway, toolRegistry, promptComposer, reporter, sessionService, clock,
+             agentContextBuilder, recoveryAdvisor, modelName, traceReporter, maxToolCallsPerTurn,
+             enableThinking, null);
+    }
+
+    public AgentEngine(LlmGateway llmGateway,
+                       ToolRegistry toolRegistry,
+                       PromptComposer promptComposer,
+                       Reporter reporter,
+                       SessionService sessionService,
+                       Clock clock,
+                       AgentContextBuilder agentContextBuilder,
+                       ToolFailureRecoveryAdvisor recoveryAdvisor,
+                       String modelName,
+                       com.tinyclaw.ports.observability.TraceReporter traceReporter,
+                       int maxToolCallsPerTurn,
+                       boolean enableThinking,
+                       Executor toolExecutor) {
         this.llmGateway = DomainGuards.requireNonNull(llmGateway, "llmGateway");
         this.toolRegistry = DomainGuards.requireNonNull(toolRegistry, "toolRegistry");
         this.promptComposer = DomainGuards.requireNonNull(promptComposer, "promptComposer");
@@ -180,6 +205,16 @@ public class AgentEngine implements SubagentRunner {
         this.traceReporter = traceReporter != null ? traceReporter : new com.tinyclaw.ports.observability.NoOpTraceReporter();
         this.maxToolCallsPerTurn = maxToolCallsPerTurn > 0 ? maxToolCallsPerTurn : 8;
         this.enableThinking = enableThinking;
+        this.toolExecutor = toolExecutor != null ? toolExecutor : createDefaultToolExecutor();
+    }
+
+    private static Executor createDefaultToolExecutor() {
+        int threads = Math.max(2, Runtime.getRuntime().availableProcessors());
+        return Executors.newFixedThreadPool(threads, r -> {
+            Thread t = new Thread(r, "tinyclaw-tool-default-" + DEFAULT_THREAD_COUNTER.incrementAndGet());
+            t.setDaemon(true);
+            return t;
+        });
     }
 
     /**
@@ -188,7 +223,7 @@ public class AgentEngine implements SubagentRunner {
      */
     public AgentEngine withLlmGateway(LlmGateway llmGateway) {
         return new AgentEngine(llmGateway, toolRegistry, promptComposer, reporter, sessionService, clock,
-            agentContextBuilder, recoveryAdvisor, modelName, traceReporter, maxToolCallsPerTurn, enableThinking);
+            agentContextBuilder, recoveryAdvisor, modelName, traceReporter, maxToolCallsPerTurn, enableThinking, toolExecutor);
     }
 
     /**
@@ -197,7 +232,7 @@ public class AgentEngine implements SubagentRunner {
      */
     public AgentEngine withModelName(String modelName) {
         return new AgentEngine(llmGateway, toolRegistry, promptComposer, reporter, sessionService, clock,
-            agentContextBuilder, recoveryAdvisor, modelName, traceReporter, maxToolCallsPerTurn, enableThinking);
+            agentContextBuilder, recoveryAdvisor, modelName, traceReporter, maxToolCallsPerTurn, enableThinking, toolExecutor);
     }
 
     /**
@@ -206,7 +241,7 @@ public class AgentEngine implements SubagentRunner {
      */
     public AgentEngine withEnableThinking(boolean enableThinking) {
         return new AgentEngine(llmGateway, toolRegistry, promptComposer, reporter, sessionService, clock,
-            agentContextBuilder, recoveryAdvisor, modelName, traceReporter, maxToolCallsPerTurn, enableThinking);
+            agentContextBuilder, recoveryAdvisor, modelName, traceReporter, maxToolCallsPerTurn, enableThinking, toolExecutor);
     }
 
     /**
@@ -369,20 +404,51 @@ public class AgentEngine implements SubagentRunner {
 
                 // Execute tool calls concurrently, preserving order for observations
                 List<ToolCall> toolCalls = response.toolCalls();
-                List<CompletableFuture<ToolResult>> futures = new ArrayList<>(toolCalls.size());
+                List<CompletableFuture<ToolExecutionOutcome>> futures = new ArrayList<>(toolCalls.size());
                 for (ToolCall toolCall : toolCalls) {
                     reporter.onToolCall(currentRun.id(), toolCall);
-                    CompletableFuture<ToolResult> future = CompletableFuture.supplyAsync(() ->
-                        toolRegistry.execute(toolCall, toolContext)
-                    );
+                    CompletableFuture<ToolExecutionOutcome> future = CompletableFuture.supplyAsync(() -> {
+                        Instant startedAt = clock.instant();
+                        ToolResult result;
+                        try {
+                            result = toolRegistry.execute(toolCall, toolContext);
+                        } catch (Exception e) {
+                            result = ToolResult.failure(toolCall.id(), "Tool execution failed: " + e.getMessage());
+                        }
+                        Instant completedAt = clock.instant();
+                        return new ToolExecutionOutcome(toolCall, result, startedAt, completedAt);
+                    }, toolExecutor);
                     futures.add(future);
                 }
 
+                boolean interrupted = false;
                 for (int i = 0; i < toolCalls.size(); i++) {
                     ToolCall toolCall = toolCalls.get(i);
-                    ToolResult toolResult = futures.get(i).join();
-                    Instant completedAt = clock.instant();
+                    ToolExecutionOutcome outcome;
+                    try {
+                        outcome = futures.get(i).get();
+                    } catch (InterruptedException e) {
+                        interrupted = true;
+                        // Cancel current and all remaining futures
+                        for (int j = i; j < futures.size(); j++) {
+                            futures.get(j).cancel(true);
+                        }
+                        break;
+                    } catch (ExecutionException e) {
+                        // Cancel remaining futures; convert this tool's exception to failure
+                        for (int j = i + 1; j < futures.size(); j++) {
+                            futures.get(j).cancel(true);
+                        }
+                        Throwable cause = e.getCause() != null ? e.getCause() : e;
+                        outcome = new ToolExecutionOutcome(
+                            toolCall,
+                            ToolResult.failure(toolCall.id(), "Tool execution failed: " + cause.getMessage()),
+                            clock.instant(),
+                            clock.instant()
+                        );
+                    }
 
+                    ToolResult toolResult = outcome.toolResult();
                     reporter.onToolResult(currentRun.id(), toolResult);
 
                     traceReporter.recordEvent(span, "tool.execute", Map.of(
@@ -400,8 +466,8 @@ public class AgentEngine implements SubagentRunner {
                             toolCall.argumentsJson(),
                             toolResult.output(),
                             toolResult.error(),
-                            clock.instant(), // startedAt approximated to completion time for async execution
-                            completedAt
+                            outcome.startedAt(),
+                            outcome.completedAt()
                         );
                         toolExecutionRepository.append(currentRun.id(), record);
                     }
@@ -418,6 +484,16 @@ public class AgentEngine implements SubagentRunner {
 
                     Optional<Message> reminder = failureReminder.onToolResult(toolCall, toolResult);
                     reminder.ifPresent(r -> sessionService.appendMessage(session.id(), r));
+                }
+
+                if (interrupted) {
+                    Thread.currentThread().interrupt();
+                    String reason = "Tool execution interrupted";
+                    currentRun = currentRun.fail(reason, clock.instant());
+                    reporter.onRunFailed(currentRun.id(), reason);
+                    traceReporter.addAttribute(span, "error", reason);
+                    traceReporter.endSpan(span);
+                    return new AgentRunResult(false, lastAssistantContent, currentRun.currentTurn(), reason, totalUsage);
                 }
             }
 

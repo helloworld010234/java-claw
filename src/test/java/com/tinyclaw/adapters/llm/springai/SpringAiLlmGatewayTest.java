@@ -52,6 +52,120 @@ class SpringAiLlmGatewayTest {
     }
 
     @Test
+    void returnsMultipleToolCalls() {
+        AssistantMessage am = AssistantMessage.builder()
+            .content("")
+            .toolCalls(List.of(
+                new AssistantMessage.ToolCall("t1", "function", "read_file", "{\"path\":\"a.txt\"}"),
+                new AssistantMessage.ToolCall("t2", "function", "write_file", "{\"path\":\"b.txt\",\"content\":\"hello\"}")
+            ))
+            .build();
+        when(chatModel.call(any(Prompt.class))).thenReturn(
+            new ChatResponse(List.of(new Generation(am)))
+        );
+
+        LlmRequest request = new LlmRequest("test", List.of(Message.user("hi")), List.of(), LlmRequestOptions.defaults());
+        LlmResponse response = gateway.generate(request);
+
+        assertThat(response.hasToolCalls()).isTrue();
+        assertThat(response.toolCalls()).hasSize(2);
+        assertThat(response.toolCalls().get(0).id()).isEqualTo("t1");
+        assertThat(response.toolCalls().get(0).name()).isEqualTo("read_file");
+        assertThat(response.toolCalls().get(1).id()).isEqualTo("t2");
+        assertThat(response.toolCalls().get(1).name()).isEqualTo("write_file");
+        assertThat(response.content()).isEqualTo("");
+    }
+
+    @Test
+    void returnsEmptyContentWithToolCalls() {
+        AssistantMessage am = AssistantMessage.builder()
+            .content("")
+            .toolCalls(List.of(new AssistantMessage.ToolCall("t1", "function", "shell_command", "{\"command\":\"echo hi\"}")))
+            .build();
+        when(chatModel.call(any(Prompt.class))).thenReturn(
+            new ChatResponse(List.of(new Generation(am)))
+        );
+
+        LlmRequest request = new LlmRequest("test", List.of(Message.user("hi")), List.of(), LlmRequestOptions.defaults());
+        LlmResponse response = gateway.generate(request);
+
+        assertThat(response.content()).isEqualTo("");
+        assertThat(response.hasToolCalls()).isTrue();
+        assertThat(response.toolCalls()).hasSize(1);
+    }
+
+    @Test
+    void returnsEmptyResponseWhenResultsAreEmpty() {
+        when(chatModel.call(any(Prompt.class))).thenReturn(
+            new ChatResponse(List.of())
+        );
+
+        LlmRequest request = new LlmRequest("test", List.of(Message.user("hi")), List.of(), LlmRequestOptions.defaults());
+        LlmResponse response = gateway.generate(request);
+
+        assertThat(response.content()).isEqualTo("");
+        assertThat(response.hasToolCalls()).isFalse();
+        assertThat(response.usage()).isNull();
+    }
+
+    @Test
+    void returnsNullUsageWhenBothTokensAreZero() {
+        ChatResponseMetadata metadata = ChatResponseMetadata.builder()
+            .usage(new DefaultUsage(0, 0, 0, null))
+            .build();
+        when(chatModel.call(any(Prompt.class))).thenReturn(
+            new ChatResponse(List.of(new Generation(AssistantMessage.builder().content("ok").build())), metadata)
+        );
+
+        LlmRequest request = new LlmRequest("test", List.of(Message.user("hi")), List.of(), LlmRequestOptions.defaults());
+        LlmResponse response = gateway.generate(request);
+
+        assertThat(response.usage()).isNull();
+    }
+
+    @Test
+    void classifiesHttp500AsTransientNetwork() {
+        when(chatModel.call(any(Prompt.class))).thenThrow(
+            org.springframework.web.client.HttpServerErrorException.create(
+                org.springframework.http.HttpStatus.INTERNAL_SERVER_ERROR,
+                "Internal Server Error", new org.springframework.http.HttpHeaders(), new byte[0], java.nio.charset.StandardCharsets.UTF_8));
+
+        LlmRequest request = new LlmRequest("test", List.of(Message.user("hi")), List.of(), LlmRequestOptions.defaults());
+        assertThatThrownBy(() -> gateway.generate(request))
+            .isInstanceOf(LlmException.class)
+            .satisfies(e -> assertThat(((LlmException) e).getErrorType()).isEqualTo(LlmErrorType.TRANSIENT_NETWORK));
+    }
+
+    @Test
+    void classifiesHttp403AsAuthentication() {
+        when(chatModel.call(any(Prompt.class))).thenThrow(
+            HttpClientErrorException.create(org.springframework.http.HttpStatus.FORBIDDEN,
+                "Forbidden", new org.springframework.http.HttpHeaders(), new byte[0], java.nio.charset.StandardCharsets.UTF_8));
+
+        LlmRequest request = new LlmRequest("test", List.of(Message.user("hi")), List.of(), LlmRequestOptions.defaults());
+        assertThatThrownBy(() -> gateway.generate(request))
+            .isInstanceOf(LlmException.class)
+            .satisfies(e -> assertThat(((LlmException) e).getErrorType()).isEqualTo(LlmErrorType.AUTHENTICATION));
+    }
+
+    @Test
+    void handlesMalformedJsonInToolArguments() {
+        AssistantMessage am = AssistantMessage.builder()
+            .content("")
+            .toolCalls(List.of(new AssistantMessage.ToolCall("t1", "function", "read_file", "not-valid-json")))
+            .build();
+        when(chatModel.call(any(Prompt.class))).thenReturn(
+            new ChatResponse(List.of(new Generation(am)))
+        );
+
+        LlmRequest request = new LlmRequest("test", List.of(Message.user("hi")), List.of(), LlmRequestOptions.defaults());
+        LlmResponse response = gateway.generate(request);
+
+        assertThat(response.hasToolCalls()).isTrue();
+        assertThat(response.toolCalls().get(0).argumentsJson()).isEqualTo("not-valid-json");
+    }
+
+    @Test
     void returnsToolCalls() {
         AssistantMessage am = AssistantMessage.builder()
             .content("")

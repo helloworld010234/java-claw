@@ -11,6 +11,7 @@ public class AgentProperties {
     private int maxTurns = 20;
     private int maxToolCallsPerTurn = 8;
     private int maxRuntimeSeconds = 600;
+    private int toolExecutorThreads = 0;
     private boolean planMode = false;
     private boolean enableThinking = false;
 
@@ -36,6 +37,14 @@ public class AgentProperties {
 
     public void setMaxRuntimeSeconds(int maxRuntimeSeconds) {
         this.maxRuntimeSeconds = maxRuntimeSeconds;
+    }
+
+    public int getToolExecutorThreads() {
+        return toolExecutorThreads;
+    }
+
+    public void setToolExecutorThreads(int toolExecutorThreads) {
+        this.toolExecutorThreads = toolExecutorThreads;
     }
 
     public boolean isPlanMode() {

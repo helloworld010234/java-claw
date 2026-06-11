@@ -40,10 +40,13 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Instant;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -824,76 +827,83 @@ class AgentEngineTest {
     }
 
     @Test
-    void multipleToolCallsExecuteConcurrently() {
-        java.util.concurrent.atomic.AtomicInteger concurrentCount = new java.util.concurrent.atomic.AtomicInteger(0);
-        java.util.concurrent.atomic.AtomicInteger maxConcurrent = new java.util.concurrent.atomic.AtomicInteger(0);
+    void multipleToolCallsExecuteConcurrently() throws Exception {
+        CountDownLatch bothStarted = new CountDownLatch(2);
+        CountDownLatch proceed = new CountDownLatch(1);
 
-        AgentTool slowTool = new AgentTool() {
+        AgentTool tool1 = new AgentTool() {
             @Override
-            public String name() { return "slow_tool"; }
+            public String name() { return "tool_1"; }
             @Override
             public ToolDefinition definition() {
-                return new ToolDefinition("slow_tool", "Slow tool", "{}");
+                return new ToolDefinition("tool_1", "Tool 1", "{}");
             }
             @Override
             public ToolResult execute(ToolCall call, ToolExecutionContext context) {
-                int current = concurrentCount.incrementAndGet();
-                maxConcurrent.updateAndGet(v -> Math.max(v, current));
+                bothStarted.countDown();
                 try {
-                    Thread.sleep(100);
+                    proceed.await();
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                 }
-                concurrentCount.decrementAndGet();
-                return ToolResult.success(call.id(), "slow-result");
+                return ToolResult.success(call.id(), "result-1");
             }
         };
 
-        AgentTool fastTool = new AgentTool() {
+        AgentTool tool2 = new AgentTool() {
             @Override
-            public String name() { return "fast_tool"; }
+            public String name() { return "tool_2"; }
             @Override
             public ToolDefinition definition() {
-                return new ToolDefinition("fast_tool", "Fast tool", "{}");
+                return new ToolDefinition("tool_2", "Tool 2", "{}");
             }
             @Override
             public ToolResult execute(ToolCall call, ToolExecutionContext context) {
-                int current = concurrentCount.incrementAndGet();
-                maxConcurrent.updateAndGet(v -> Math.max(v, current));
+                bothStarted.countDown();
                 try {
-                    Thread.sleep(50);
+                    proceed.await();
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                 }
-                concurrentCount.decrementAndGet();
-                return ToolResult.success(call.id(), "fast-result");
+                return ToolResult.success(call.id(), "result-2");
             }
         };
 
-        ToolRegistry concurrentRegistry = new ToolRegistry(List.of(slowTool, fastTool));
+        ToolRegistry concurrentRegistry = new ToolRegistry(List.of(tool1, tool2));
         FakeLlmGateway fakeLlm = new FakeLlmGateway(List.of(
             new LlmResponse("", List.of(
-                ToolCall.of("t1", "slow_tool", "{}"),
-                ToolCall.of("t2", "fast_tool", "{}")
+                ToolCall.of("t1", "tool_1", "{}"),
+                ToolCall.of("t2", "tool_2", "{}")
             ), null),
             new LlmResponse("done", List.of(), null)
         ));
         AgentEngine engine = new AgentEngine(fakeLlm, concurrentRegistry, promptComposer, reporter, sessionService, clock);
 
-        AgentRunResult result = engine.run(
-            startRun(3),
-            createSession(),
-            "Run concurrent tools",
-            new ToolExecutionContext(workspace)
-        );
+        // Run in a separate thread so we can release the latch after verifying both started
+        java.util.concurrent.atomic.AtomicReference<AgentRunResult> resultRef = new java.util.concurrent.atomic.AtomicReference<>();
+        Thread runner = new Thread(() -> {
+            resultRef.set(engine.run(
+                startRun(3),
+                createSession(),
+                "Run concurrent tools",
+                new ToolExecutionContext(workspace)
+            ));
+        });
+        runner.start();
 
-        assertThat(result.success()).isTrue();
-        // Both tools were actually concurrent at some point
-        assertThat(maxConcurrent.get()).isGreaterThanOrEqualTo(2);
+        assertThat(bothStarted.await(5, java.util.concurrent.TimeUnit.SECONDS)).isTrue();
+        proceed.countDown();
+        runner.join(5000);
+
+        assertThat(resultRef.get()).isNotNull();
+        assertThat(resultRef.get().success()).isTrue();
     }
 
     @Test
-    void concurrentToolObservationsPreserveLlmOrder() {
+    void concurrentToolObservationsPreserveLlmOrder() throws Exception {
+        CountDownLatch slowStarted = new CountDownLatch(1);
+        CountDownLatch fastCanComplete = new CountDownLatch(1);
+
         AgentTool slowTool = new AgentTool() {
             @Override
             public String name() { return "slow_tool"; }
@@ -903,8 +913,9 @@ class AgentEngineTest {
             }
             @Override
             public ToolResult execute(ToolCall call, ToolExecutionContext context) {
+                slowStarted.countDown();
                 try {
-                    Thread.sleep(150);
+                    fastCanComplete.await();
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                 }
@@ -922,11 +933,16 @@ class AgentEngineTest {
             @Override
             public ToolResult execute(ToolCall call, ToolExecutionContext context) {
                 try {
-                    Thread.sleep(10);
+                    if (!slowStarted.await(5, java.util.concurrent.TimeUnit.SECONDS)) {
+                        return ToolResult.failure(call.id(), "Timeout waiting for slow tool");
+                    }
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
+                    return ToolResult.failure(call.id(), "Interrupted");
                 }
-                return ToolResult.success(call.id(), "fast-result");
+                ToolResult result = ToolResult.success(call.id(), "fast-result");
+                fastCanComplete.countDown();
+                return result;
             }
         };
 
@@ -970,11 +986,6 @@ class AgentEngineTest {
             }
             @Override
             public ToolResult execute(ToolCall call, ToolExecutionContext context) {
-                try {
-                    Thread.sleep(50);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
                 return ToolResult.failure(call.id(), "oldText not found in file: src.txt");
             }
         };
@@ -988,11 +999,6 @@ class AgentEngineTest {
             }
             @Override
             public ToolResult execute(ToolCall call, ToolExecutionContext context) {
-                try {
-                    Thread.sleep(10);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
                 return ToolResult.success(call.id(), "ok-result");
             }
         };
@@ -1022,6 +1028,196 @@ class AgentEngineTest {
         assertThat(memory.get(2).content()).contains("oldText not found").contains("[Recovery hint]");
         assertThat(memory.get(3).toolCallId()).isEqualTo("t2");
         assertThat(memory.get(3).content()).isEqualTo("ok-result");
+    }
+
+    @Test
+    void usesInjectedExecutorForToolExecution() throws Exception {
+        java.util.concurrent.ExecutorService customExecutor = java.util.concurrent.Executors.newFixedThreadPool(
+            2, r -> new Thread(r, "custom-test-thread")
+        );
+        java.util.concurrent.atomic.AtomicReference<String> threadName = new java.util.concurrent.atomic.AtomicReference<>();
+
+        AgentTool trackingTool = new AgentTool() {
+            @Override
+            public String name() { return "tracking_tool"; }
+            @Override
+            public ToolDefinition definition() {
+                return new ToolDefinition("tracking_tool", "Tracking tool", "{}");
+            }
+            @Override
+            public ToolResult execute(ToolCall call, ToolExecutionContext context) {
+                threadName.set(Thread.currentThread().getName());
+                return ToolResult.success(call.id(), "ok");
+            }
+        };
+
+        ToolRegistry registry = new ToolRegistry(List.of(trackingTool));
+        FakeLlmGateway fakeLlm = new FakeLlmGateway(List.of(
+            new LlmResponse("", List.of(
+                ToolCall.of("t1", "tracking_tool", "{}")
+            ), null),
+            new LlmResponse("done", List.of(), null)
+        ));
+        AgentEngine engine = new AgentEngine(fakeLlm, registry, promptComposer, reporter, sessionService, clock,
+            new AgentContextBuilder(promptComposer, new WorkingMemorySelector(), new ContextCompactor()),
+            new ToolFailureRecoveryAdvisor(), null,
+            new com.tinyclaw.ports.observability.NoOpTraceReporter(), 8, false, customExecutor);
+
+        AgentRunResult result = engine.run(
+            startRun(3), createSession(), "Track executor", new ToolExecutionContext(workspace)
+        );
+
+        assertThat(result.success()).isTrue();
+        assertThat(threadName.get()).startsWith("custom-test-thread");
+        customExecutor.shutdown();
+    }
+
+    @Test
+    void toolExecutionRecordsHaveAccurateTimeWindow() throws Exception {
+        CountDownLatch proceed = new CountDownLatch(1);
+
+        // Ticking clock so that startedAt and completedAt are measurably different
+        java.util.concurrent.atomic.AtomicLong tick = new java.util.concurrent.atomic.AtomicLong(
+            Instant.parse("2026-01-01T00:00:00Z").toEpochMilli()
+        );
+        Clock tickingClock = new Clock() {
+            @Override
+            public ZoneId getZone() { return ZoneOffset.UTC; }
+            @Override
+            public Clock withZone(ZoneId zone) { return this; }
+            @Override
+            public Instant instant() {
+                return Instant.ofEpochMilli(tick.incrementAndGet());
+            }
+        };
+
+        AgentTool delayedTool = new AgentTool() {
+            @Override
+            public String name() { return "delayed_tool"; }
+            @Override
+            public ToolDefinition definition() {
+                return new ToolDefinition("delayed_tool", "Delayed tool", "{}");
+            }
+            @Override
+            public ToolResult execute(ToolCall call, ToolExecutionContext context) {
+                try {
+                    proceed.await(5, TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                return ToolResult.success(call.id(), "delayed-result");
+            }
+        };
+
+        ToolRegistry registry = new ToolRegistry(List.of(delayedTool));
+        FakeLlmGateway fakeLlm = new FakeLlmGateway(List.of(
+            new LlmResponse("", List.of(
+                ToolCall.of("t1", "delayed_tool", "{}")
+            ), null),
+            new LlmResponse("done", List.of(), null)
+        ));
+        AgentEngine engine = new AgentEngine(fakeLlm, registry, promptComposer, reporter, sessionService, tickingClock);
+
+        List<ToolExecutionRecord> captured = new ArrayList<>();
+        ToolExecutionRepositoryPort toolRepo = new ToolExecutionRepositoryPort() {
+            @Override
+            public void append(String runId, ToolExecutionRecord record) {
+                captured.add(record);
+            }
+            @Override
+            public List<ToolExecutionRecord> findByRunId(String runId) {
+                return List.of();
+            }
+        };
+
+        java.util.concurrent.atomic.AtomicReference<AgentRunResult> resultRef = new java.util.concurrent.atomic.AtomicReference<>();
+        Thread runner = new Thread(() -> {
+            resultRef.set(engine.run(
+                AgentRun.start("run-1", "session-1", 3, tickingClock.instant()),
+                Session.create("session-1", workspace.toAbsolutePath().toString(), tickingClock.instant()),
+                "Delayed tool",
+                new ToolExecutionContext(workspace), toolRepo
+            ));
+        });
+        runner.start();
+
+        // Let the tool start, then release it
+        Thread.sleep(50);
+        proceed.countDown();
+        runner.join(5000);
+
+        assertThat(resultRef.get()).isNotNull();
+        assertThat(resultRef.get().success()).isTrue();
+        assertThat(captured).hasSize(1);
+        ToolExecutionRecord record = captured.get(0);
+        assertThat(record.startedAt()).isNotNull();
+        assertThat(record.completedAt()).isNotNull();
+        assertThat(record.completedAt()).isAfter(record.startedAt());
+    }
+
+    @Test
+    void toolExceptionConvertedToFailureWithoutBreakingOthers() {
+        ToolRegistry explodingRegistry = new ToolRegistry(List.of()) {
+            @Override
+            public ToolResult execute(ToolCall call, ToolExecutionContext context) {
+                if ("explode".equals(call.name())) {
+                    throw new RuntimeException("boom");
+                }
+                return ToolResult.success(call.id(), "ok-result");
+            }
+            @Override
+            public List<ToolDefinition> availableTools() {
+                return List.of(
+                    new ToolDefinition("explode", "Exploding tool", "{}"),
+                    new ToolDefinition("ok_tool", "OK tool", "{}")
+                );
+            }
+        };
+
+        FakeLlmGateway fakeLlm = new FakeLlmGateway(List.of(
+            new LlmResponse("", List.of(
+                ToolCall.of("t1", "explode", "{}"),
+                ToolCall.of("t2", "ok_tool", "{}")
+            ), null),
+            new LlmResponse("Handled", List.of(), null)
+        ));
+        AgentEngine engine = new AgentEngine(fakeLlm, explodingRegistry, promptComposer, reporter, sessionService, clock);
+
+        List<ToolExecutionRecord> captured = new ArrayList<>();
+        ToolExecutionRepositoryPort toolRepo = new ToolExecutionRepositoryPort() {
+            @Override
+            public void append(String runId, ToolExecutionRecord record) {
+                captured.add(record);
+            }
+            @Override
+            public List<ToolExecutionRecord> findByRunId(String runId) {
+                return List.of();
+            }
+        };
+
+        AgentRunResult result = engine.run(
+            startRun(3), createSession(), "Test exception",
+            new ToolExecutionContext(workspace), toolRepo
+        );
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.errorReason()).contains("explode").contains("failed");
+
+        List<Message> memory = sessionService.getWorkingMemory("session-1");
+        // user + assistant(t1,t2) + observation(t1) + observation(t2) + assistant(final)
+        assertThat(memory).hasSize(5);
+        assertThat(memory.get(2).toolCallId()).isEqualTo("t1");
+        assertThat(memory.get(2).content()).contains("boom");
+        assertThat(memory.get(3).toolCallId()).isEqualTo("t2");
+        assertThat(memory.get(3).content()).isEqualTo("ok-result");
+
+        assertThat(captured).hasSize(2);
+        ToolExecutionRecord r1 = captured.stream().filter(r -> r.stepId().equals("t1")).findFirst().orElseThrow();
+        ToolExecutionRecord r2 = captured.stream().filter(r -> r.stepId().equals("t2")).findFirst().orElseThrow();
+        assertThat(r1.isError()).isTrue();
+        assertThat(r1.output()).contains("boom");
+        assertThat(r2.isError()).isFalse();
+        assertThat(r2.output()).isEqualTo("ok-result");
     }
 
     private AgentRun startRun(int maxTurns) {

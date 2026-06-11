@@ -48,6 +48,19 @@ class SpringAiMessageMapperTest {
     }
 
     @Test
+    void mapsAssistantWithEmptyContent() {
+        ToolCall tc = ToolCall.of("tc1", "write_file", "{\"path\":\"a.txt\"}");
+        List<org.springframework.ai.chat.messages.Message> result =
+            SpringAiMessageMapper.toSpringAiMessages(List.of(Message.assistantWithToolCalls("", List.of(tc))));
+
+        assertThat(result).hasSize(1);
+        assertThat(result.get(0)).isInstanceOf(AssistantMessage.class);
+        AssistantMessage am = (AssistantMessage) result.get(0);
+        assertThat(am.getText()).isEqualTo("");
+        assertThat(am.getToolCalls()).hasSize(1);
+    }
+
+    @Test
     void mapsAssistantWithToolCalls() {
         ToolCall tc = ToolCall.of("tc1", "write_file", "{\"path\":\"a.txt\"}");
         List<org.springframework.ai.chat.messages.Message> result =
