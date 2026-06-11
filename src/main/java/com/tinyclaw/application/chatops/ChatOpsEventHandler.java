@@ -1,11 +1,11 @@
 package com.tinyclaw.application.chatops;
 
+import com.tinyclaw.application.engine.AgentEngine;
 import com.tinyclaw.application.run.AgentRunExecutionService;
 import com.tinyclaw.domain.session.Session;
 import com.tinyclaw.ports.chatops.ChatOpsEvent;
 import com.tinyclaw.ports.chatops.ChatOpsMessageSender;
 import com.tinyclaw.ports.chatops.ChatOpsOutboundMessage;
-import com.tinyclaw.ports.reporter.Reporter;
 import com.tinyclaw.ports.session.SessionService;
 import com.tinyclaw.ports.tool.ToolExecutionContext;
 import org.slf4j.Logger;
@@ -13,9 +13,8 @@ import org.slf4j.LoggerFactory;
 
 import java.nio.file.Path;
 import java.time.Instant;
-import java.util.Set;
+import java.util.LinkedHashMap;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 
 /**
@@ -40,21 +39,30 @@ public class ChatOpsEventHandler {
     private final ExecutorService executor;
     private final Path chatOpsWorkspace;
     private final int maxTurns;
-    private final Set<String> seenEventIds;
+    private final java.util.LinkedHashMap<String, Boolean> seenEventIds;
+    private final AgentEngine agentEngine;
+    private static final int MAX_SEEN_EVENTS = 10_000;
 
     public ChatOpsEventHandler(AgentRunExecutionService executionService,
                                SessionService sessionService,
                                ChatOpsMessageSender messageSender,
                                ExecutorService executor,
                                Path chatOpsWorkspace,
-                               int maxTurns) {
+                               int maxTurns,
+                               AgentEngine agentEngine) {
         this.executionService = executionService;
         this.sessionService = sessionService;
         this.messageSender = messageSender;
         this.executor = executor;
         this.chatOpsWorkspace = chatOpsWorkspace;
         this.maxTurns = maxTurns;
-        this.seenEventIds = ConcurrentHashMap.newKeySet();
+        this.agentEngine = agentEngine;
+        this.seenEventIds = new java.util.LinkedHashMap<>() {
+            @Override
+            protected boolean removeEldestEntry(java.util.Map.Entry<String, Boolean> eldest) {
+                return size() > MAX_SEEN_EVENTS;
+            }
+        };
     }
 
     /**
@@ -69,7 +77,7 @@ public class ChatOpsEventHandler {
             return false;
         }
 
-        if (!seenEventIds.add(event.eventId())) {
+        if (seenEventIds.putIfAbsent(event.eventId(), Boolean.TRUE) != null) {
             log.info("[ChatOps] Duplicate event ignored: {}", event.eventId());
             return false;
         }
@@ -99,7 +107,7 @@ public class ChatOpsEventHandler {
                 log.info("[Run {}] ChatOps run started from chat {}", runId, event.chatId());
                 var result = executionService.execute(
                     runId, session, prompt, context,
-                    null, "chatops", null, maxTurns
+                    agentEngine, "chatops", null, maxTurns
                 );
                 if (result.success()) {
                     messageSender.sendMessage(event.chatId(),
@@ -132,6 +140,6 @@ public class ChatOpsEventHandler {
      * Exposed for testing: check whether an eventId has been seen.
      */
     boolean isDuplicate(String eventId) {
-        return seenEventIds.contains(eventId);
+        return seenEventIds.containsKey(eventId);
     }
 }

@@ -5,6 +5,7 @@ import com.tinyclaw.domain.message.ToolResult;
 import com.tinyclaw.domain.message.Usage;
 import com.tinyclaw.ports.chatops.ChatOpsMessageSender;
 import com.tinyclaw.ports.chatops.ChatOpsOutboundMessage;
+import com.tinyclaw.ports.chatops.ChatOpsSanitizer;
 import com.tinyclaw.ports.reporter.Reporter;
 import com.tinyclaw.ports.reporter.RunReportResult;
 import org.slf4j.Logger;
@@ -44,19 +45,13 @@ public class ChatOpsReporter implements Reporter {
 
     @Override
     public void onToolCall(String runId, ToolCall toolCall) {
-        String args = toolCall.argumentsJson();
-        if (args != null && args.length() > MAX_ARGS_LEN) {
-            args = args.substring(0, MAX_ARGS_LEN) + "... (truncated)";
-        }
+        String args = ChatOpsSanitizer.sanitizeAndTruncate(toolCall.argumentsJson(), MAX_ARGS_LEN);
         sender.sendMessage(chatId, ChatOpsOutboundMessage.toolCall(runId, toolCall.name(), args));
     }
 
     @Override
     public void onToolResult(String runId, ToolResult toolResult) {
-        String output = toolResult.output();
-        if (output != null && output.length() > MAX_OUTPUT_LEN) {
-            output = output.substring(0, MAX_OUTPUT_LEN) + "... (truncated)";
-        }
+        String output = ChatOpsSanitizer.sanitizeAndTruncate(toolResult.output(), MAX_OUTPUT_LEN);
         sender.sendMessage(chatId, ChatOpsOutboundMessage.toolResult(runId, "tool", toolResult.error(), output));
     }
 

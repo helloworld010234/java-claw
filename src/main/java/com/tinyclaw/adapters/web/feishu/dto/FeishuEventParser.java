@@ -66,7 +66,7 @@ public class FeishuEventParser {
         String text = extractText(message.content());
         String chatId = message.chat_id();
         String messageId = message.message_id();
-        String senderId = event.sender();
+        String senderId = extractSenderId(event.sender());
 
         return new ChatOpsEvent(
             payload.uuid(),
@@ -77,6 +77,42 @@ public class FeishuEventParser {
             Instant.now(),
             ChatOpsEvent.Type.TEXT_MESSAGE
         );
+    }
+
+    private String extractSenderId(com.fasterxml.jackson.databind.JsonNode senderNode) {
+        if (senderNode == null || senderNode.isNull()) {
+            return null;
+        }
+        if (senderNode.isTextual()) {
+            return senderNode.asText();
+        }
+        // Feishu sender is often an object: {"sender_id":{"union_id":"xxx","user_id":"xxx"},...}
+        JsonNode senderIdNode = senderNode.get("sender_id");
+        if (senderIdNode != null && senderIdNode.isObject()) {
+            JsonNode unionId = senderIdNode.get("union_id");
+            if (unionId != null && unionId.isTextual()) {
+                return unionId.asText();
+            }
+            JsonNode userId = senderIdNode.get("user_id");
+            if (userId != null && userId.isTextual()) {
+                return userId.asText();
+            }
+        }
+        // Fallback: try "user_id" or "union_id" at root of sender object
+        JsonNode userId = senderNode.get("user_id");
+        if (userId != null && userId.isTextual()) {
+            return userId.asText();
+        }
+        JsonNode unionId = senderNode.get("union_id");
+        if (unionId != null && unionId.isTextual()) {
+            return unionId.asText();
+        }
+        // Last resort: return the JSON string representation (truncated)
+        String raw = senderNode.toString();
+        if (raw.length() > 100) {
+            raw = raw.substring(0, 100) + "...";
+        }
+        return raw;
     }
 
     private ChatOpsEvent unknownEvent(String eventId, String reason) {

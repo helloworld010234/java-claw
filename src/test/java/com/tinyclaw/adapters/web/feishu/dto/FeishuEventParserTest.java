@@ -49,7 +49,7 @@ class FeishuEventParserTest {
                     "m-1", null, null, null, "c-1", "group", "text",
                     "{\"text\":\"hello\"}", null
                 ),
-                "u-1", null
+                objectMapper.valueToTree(java.util.Map.of("sender_id", java.util.Map.of("union_id", "u-1"))), null
             ),
             null
         );
@@ -87,6 +87,9 @@ class FeishuEventParserTest {
     }
 
     private FeishuWebhookPayload buildTextPayload(String uuid, String msgId, String chatId, String senderId, String text) {
+        com.fasterxml.jackson.databind.JsonNode senderNode = senderId != null
+            ? objectMapper.valueToTree(java.util.Map.of("sender_id", java.util.Map.of("union_id", senderId)))
+            : null;
         return new FeishuWebhookPayload(
             uuid, "tk-1", null, "event_callback",
             new FeishuWebhookPayload.FeishuEvent(
@@ -95,7 +98,7 @@ class FeishuEventParserTest {
                     msgId, null, null, null, chatId, "group", "text",
                     "{\"text\":\"" + text + "\"}", null
                 ),
-                senderId, null
+                senderNode, null
             ),
             null
         );

@@ -15,6 +15,8 @@ import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
+import java.util.List;
+
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -42,6 +44,7 @@ class FeishuWebhookControllerTest {
     @Test
     void urlVerificationReturnsChallenge() throws Exception {
         when(chatOpsProperties.isEnabled()).thenReturn(true);
+        when(chatOpsProperties.getVerifyToken()).thenReturn("");
 
         String body = """
             {
@@ -65,6 +68,7 @@ class FeishuWebhookControllerTest {
     @Test
     void validTextMessageReturnsAccepted() throws Exception {
         when(chatOpsProperties.isEnabled()).thenReturn(true);
+        when(chatOpsProperties.getVerifyToken()).thenReturn("");
         when(eventHandler.handle(any())).thenReturn(true);
 
         String body = buildTextMessagePayload("evt-1", "msg-1", "chat-1", "user-1", "hello");
@@ -79,6 +83,7 @@ class FeishuWebhookControllerTest {
     @Test
     void duplicateEventReturnsDuplicateStatus() throws Exception {
         when(chatOpsProperties.isEnabled()).thenReturn(true);
+        when(chatOpsProperties.getVerifyToken()).thenReturn("");
         when(eventHandler.handle(any())).thenReturn(false);
 
         String body = buildTextMessagePayload("evt-dup", "msg-1", "chat-1", "user-1", "hello");
@@ -93,6 +98,7 @@ class FeishuWebhookControllerTest {
     @Test
     void emptyTextMessageReturnsIgnored() throws Exception {
         when(chatOpsProperties.isEnabled()).thenReturn(true);
+        when(chatOpsProperties.getVerifyToken()).thenReturn("");
 
         String body = buildTextMessagePayload("evt-1", "msg-1", "chat-1", "user-1", "   ");
 
@@ -106,6 +112,7 @@ class FeishuWebhookControllerTest {
     @Test
     void unsupportedEventTypeReturnsIgnored() throws Exception {
         when(chatOpsProperties.isEnabled()).thenReturn(true);
+        when(chatOpsProperties.getVerifyToken()).thenReturn("");
 
         String body = """
             {
@@ -147,6 +154,7 @@ class FeishuWebhookControllerTest {
     @Test
     void missingChallengeReturnsBadRequest() throws Exception {
         when(chatOpsProperties.isEnabled()).thenReturn(true);
+        when(chatOpsProperties.getVerifyToken()).thenReturn("");
 
         String body = """
             {
@@ -165,6 +173,67 @@ class FeishuWebhookControllerTest {
                 .content(body))
             .andExpect(status().isBadRequest())
             .andExpect(jsonPath("$.error").value("Missing challenge"));
+    }
+
+    @Test
+    void tokenMismatchReturnsUnauthorized() throws Exception {
+        when(chatOpsProperties.isEnabled()).thenReturn(true);
+        when(chatOpsProperties.getVerifyToken()).thenReturn("secret-token");
+
+        String body = buildTextMessagePayload("evt-1", "msg-1", "chat-1", "user-1", "hello");
+        // body uses token "tk-1" which does not match "secret-token"
+
+        mockMvc.perform(post("/webhook/feishu/event")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body))
+            .andExpect(status().isUnauthorized())
+            .andExpect(jsonPath("$.error").value("Unauthorized"));
+    }
+
+    @Test
+    void tokenMatchProceeds() throws Exception {
+        when(chatOpsProperties.isEnabled()).thenReturn(true);
+        when(chatOpsProperties.getVerifyToken()).thenReturn("tk-1");
+        when(eventHandler.handle(any())).thenReturn(true);
+
+        String body = buildTextMessagePayload("evt-1", "msg-1", "chat-1", "user-1", "hello");
+
+        mockMvc.perform(post("/webhook/feishu/event")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.status").value("accepted"));
+    }
+
+    @Test
+    void chatNotInAllowlistReturnsForbidden() throws Exception {
+        when(chatOpsProperties.isEnabled()).thenReturn(true);
+        when(chatOpsProperties.getVerifyToken()).thenReturn("");
+        when(chatOpsProperties.getAllowedChatIds()).thenReturn(List.of("allowed-chat-1"));
+
+        String body = buildTextMessagePayload("evt-1", "msg-1", "unauthorized-chat", "user-1", "hello");
+
+        mockMvc.perform(post("/webhook/feishu/event")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body))
+            .andExpect(status().isForbidden())
+            .andExpect(jsonPath("$.error").value("Chat not allowed"));
+    }
+
+    @Test
+    void chatInAllowlistProceeds() throws Exception {
+        when(chatOpsProperties.isEnabled()).thenReturn(true);
+        when(chatOpsProperties.getVerifyToken()).thenReturn("");
+        when(chatOpsProperties.getAllowedChatIds()).thenReturn(List.of("allowed-chat-1"));
+        when(eventHandler.handle(any())).thenReturn(true);
+
+        String body = buildTextMessagePayload("evt-1", "msg-1", "allowed-chat-1", "user-1", "hello");
+
+        mockMvc.perform(post("/webhook/feishu/event")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.status").value("accepted"));
     }
 
     private String buildTextMessagePayload(String uuid, String msgId, String chatId, String senderId, String text) {

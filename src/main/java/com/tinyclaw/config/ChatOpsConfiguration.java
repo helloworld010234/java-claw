@@ -6,6 +6,7 @@ import com.tinyclaw.adapters.web.feishu.FeishuWebhookController;
 import com.tinyclaw.adapters.web.feishu.dto.FeishuEventParser;
 import com.tinyclaw.application.chatops.ChatOpsEventHandler;
 import com.tinyclaw.application.chatops.ChatOpsReporter;
+import com.tinyclaw.application.engine.AgentEngine;
 import com.tinyclaw.application.run.AgentRunExecutionService;
 import com.tinyclaw.ports.chatops.ChatOpsMessageSender;
 import com.tinyclaw.ports.reporter.Reporter;
@@ -53,7 +54,8 @@ public class ChatOpsConfiguration {
             ChatOpsMessageSender messageSender,
             ExecutorService agentRunExecutor,
             ChatOpsProperties properties,
-            AgentProperties agentProperties) {
+            AgentProperties agentProperties,
+            AgentEngine agentEngine) {
         Path workspace = Paths.get(properties.getWorkspace()).toAbsolutePath().normalize();
         return new ChatOpsEventHandler(
             executionService,
@@ -61,7 +63,8 @@ public class ChatOpsConfiguration {
             messageSender,
             agentRunExecutor,
             workspace,
-            agentProperties.getMaxTurns()
+            agentProperties.getMaxTurns(),
+            agentEngine
         );
     }
 

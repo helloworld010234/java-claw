@@ -33,7 +33,7 @@ public record FeishuWebhookPayload(
         String app_id,
         String tenant_key,
         FeishuMessage message,
-        String sender,
+        com.fasterxml.jackson.databind.JsonNode sender,
         String sender_type
     ) {}
 

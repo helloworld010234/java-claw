@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -52,6 +53,21 @@ public class FeishuWebhookController {
                 .body(Map.of("status", "ChatOps disabled"));
         }
 
+        // Security: verify token must be configured and match
+        String verifyToken = chatOpsProperties.getVerifyToken();
+        if (verifyToken == null || verifyToken.isBlank()) {
+            log.warn("[FeishuWebhook] verifyToken is not configured; rejecting event");
+            return ResponseEntity.status(401)
+                .body(Map.of("error", "Unauthorized"));
+        }
+
+        String payloadToken = payload != null ? payload.token() : null;
+        if (payloadToken == null || !payloadToken.equals(verifyToken)) {
+            log.warn("[FeishuWebhook] Token mismatch; rejecting event");
+            return ResponseEntity.status(401)
+                .body(Map.of("error", "Unauthorized"));
+        }
+
         ChatOpsEvent event = eventParser.parse(payload);
 
         if (event.isUrlVerification()) {
@@ -73,6 +89,16 @@ public class FeishuWebhookController {
             log.info("[FeishuWebhook] Ignoring non-runnable event: chatId={}, text blank={}",
                 event.chatId(), event.text() == null || event.text().isBlank());
             return ResponseEntity.ok(Map.of("status", "ignored"));
+        }
+
+        // Security: chat allowlist
+        List<String> allowedChatIds = chatOpsProperties.getAllowedChatIds();
+        if (allowedChatIds != null && !allowedChatIds.isEmpty()) {
+            if (event.chatId() == null || !allowedChatIds.contains(event.chatId())) {
+                log.warn("[FeishuWebhook] ChatId {} not in allowlist; rejecting event", event.chatId());
+                return ResponseEntity.status(403)
+                    .body(Map.of("error", "Chat not allowed"));
+            }
         }
 
         boolean accepted = eventHandler.handle(event);
