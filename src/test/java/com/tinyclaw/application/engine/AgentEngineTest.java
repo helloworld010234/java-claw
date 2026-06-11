@@ -15,8 +15,10 @@ import com.tinyclaw.application.engine.WorkingMemorySelector;
 import com.tinyclaw.application.tool.ToolRegistry;
 import com.tinyclaw.domain.message.Message;
 import com.tinyclaw.domain.message.ToolCall;
-import com.tinyclaw.application.persistence.ToolExecutionRecord;
+import com.tinyclaw.domain.message.ToolDefinition;
+import com.tinyclaw.ports.persistence.ToolExecutionRecord;
 import com.tinyclaw.domain.message.ToolResult;
+import com.tinyclaw.ports.tool.AgentTool;
 import com.tinyclaw.domain.run.AgentRun;
 import com.tinyclaw.domain.session.Session;
 import com.tinyclaw.ports.llm.LlmException;
@@ -646,6 +648,380 @@ class AgentEngineTest {
             .filter(m -> m.role().name().equals("USER") && m.content().contains("SYSTEM REMINDER"))
             .count();
         assertThat(reminderCount).isZero();
+    }
+
+    @Test
+    void maxToolCallsPerTurnExceededFailsRun() {
+        FakeLlmGateway fakeLlm = new FakeLlmGateway(List.of(
+            new LlmResponse("", List.of(
+                ToolCall.of("t1", "write_file", "{\"path\":\"a.txt\",\"content\":\"1\"}"),
+                ToolCall.of("t2", "write_file", "{\"path\":\"b.txt\",\"content\":\"2\"}"),
+                ToolCall.of("t3", "write_file", "{\"path\":\"c.txt\",\"content\":\"3\"}"),
+                ToolCall.of("t4", "write_file", "{\"path\":\"d.txt\",\"content\":\"4\"}"),
+                ToolCall.of("t5", "write_file", "{\"path\":\"e.txt\",\"content\":\"5\"}"),
+                ToolCall.of("t6", "write_file", "{\"path\":\"f.txt\",\"content\":\"6\"}"),
+                ToolCall.of("t7", "write_file", "{\"path\":\"g.txt\",\"content\":\"7\"}"),
+                ToolCall.of("t8", "write_file", "{\"path\":\"h.txt\",\"content\":\"8\"}"),
+                ToolCall.of("t9", "write_file", "{\"path\":\"i.txt\",\"content\":\"9\"}")
+            ), null)
+        ));
+        AgentEngine engine = new AgentEngine(fakeLlm, toolRegistry, promptComposer, reporter, sessionService, clock);
+
+        AgentRunResult result = engine.run(
+            startRun(3), createSession(), "Write many files",
+            new ToolExecutionContext(workspace)
+        );
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.errorReason()).contains("Tool calls per turn exceeded limit");
+        assertThat(result.turnCount()).isEqualTo(1);
+    }
+
+    @Test
+    void customMaxToolCallsPerTurnIsRespected() {
+        FakeLlmGateway fakeLlm = new FakeLlmGateway(List.of(
+            new LlmResponse("", List.of(
+                ToolCall.of("t1", "write_file", "{\"path\":\"a.txt\",\"content\":\"1\"}"),
+                ToolCall.of("t2", "write_file", "{\"path\":\"b.txt\",\"content\":\"2\"}"),
+                ToolCall.of("t3", "write_file", "{\"path\":\"c.txt\",\"content\":\"3\"}")
+            ), null)
+        ));
+        // Default is 8, set to 2
+        AgentEngine engine = new AgentEngine(fakeLlm, toolRegistry, promptComposer, reporter, sessionService, clock,
+            new AgentContextBuilder(promptComposer, new WorkingMemorySelector(), new ContextCompactor()),
+            new ToolFailureRecoveryAdvisor(), null,
+            new com.tinyclaw.ports.observability.NoOpTraceReporter(), 2);
+
+        AgentRunResult result = engine.run(
+            startRun(3), createSession(), "Write files",
+            new ToolExecutionContext(workspace)
+        );
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.errorReason()).contains("Tool calls per turn exceeded limit: 3 > 2");
+    }
+
+    @Test
+    void customMaxToolCallsPerTurnAllowsMoreWhenIncreased() throws Exception {
+        FakeLlmGateway fakeLlm = new FakeLlmGateway(List.of(
+            new LlmResponse("", List.of(
+                ToolCall.of("t1", "write_file", "{\"path\":\"a.txt\",\"content\":\"1\"}"),
+                ToolCall.of("t2", "write_file", "{\"path\":\"b.txt\",\"content\":\"2\"}"),
+                ToolCall.of("t3", "write_file", "{\"path\":\"c.txt\",\"content\":\"3\"}")
+            ), null),
+            new LlmResponse("done", List.of(), null)
+        ));
+        // Default is 8, set to 3
+        AgentEngine engine = new AgentEngine(fakeLlm, toolRegistry, promptComposer, reporter, sessionService, clock,
+            new AgentContextBuilder(promptComposer, new WorkingMemorySelector(), new ContextCompactor()),
+            new ToolFailureRecoveryAdvisor(), null,
+            new com.tinyclaw.ports.observability.NoOpTraceReporter(), 3);
+
+        AgentRunResult result = engine.run(
+            startRun(3), createSession(), "Write files",
+            new ToolExecutionContext(workspace)
+        );
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.turnCount()).isEqualTo(2);
+        assertThat(Files.readString(workspace.resolve("a.txt"))).isEqualTo("1");
+        assertThat(Files.readString(workspace.resolve("b.txt"))).isEqualTo("2");
+        assertThat(Files.readString(workspace.resolve("c.txt"))).isEqualTo("3");
+    }
+
+    @Test
+    void thinkingPhaseProducesIntermediateReasoning() {
+        FakeLlmGateway fakeLlm = new FakeLlmGateway(List.of(
+            new LlmResponse("Let me think about this...", List.of(), null),
+            new LlmResponse("Hello, user!", List.of(), null)
+        ));
+        AgentEngine engine = new AgentEngine(fakeLlm, toolRegistry, promptComposer, reporter, sessionService, clock)
+            .withEnableThinking(true);
+
+        AgentRunResult result = engine.run(
+            startRun(3),
+            createSession(),
+            "Say hello",
+            new ToolExecutionContext(workspace)
+        );
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.finalMessage()).isEqualTo("Let me think about this...\nHello, user!");
+        assertThat(result.turnCount()).isEqualTo(1);
+
+        // Verify thinking request had no tools
+        List<LlmRequest> requests = fakeLlm.recordedRequests();
+        assertThat(requests).hasSize(2);
+        assertThat(requests.get(0).tools()).isEmpty();
+        assertThat(requests.get(1).tools()).isNotEmpty();
+    }
+
+    @Test
+    void thinkingPhaseWithEmptyThinkingContentSkipsAppending() {
+        FakeLlmGateway fakeLlm = new FakeLlmGateway(List.of(
+            new LlmResponse("", List.of(), null),
+            new LlmResponse("Hello, user!", List.of(), null)
+        ));
+        AgentEngine engine = new AgentEngine(fakeLlm, toolRegistry, promptComposer, reporter, sessionService, clock)
+            .withEnableThinking(true);
+
+        AgentRunResult result = engine.run(
+            startRun(3),
+            createSession(),
+            "Say hello",
+            new ToolExecutionContext(workspace)
+        );
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.finalMessage()).isEqualTo("Hello, user!");
+    }
+
+    @Test
+    void thinkingPhaseFailureIsReportedSeparately() {
+        FakeLlmGateway fakeLlm = new FakeLlmGateway(req -> {
+            if (req.tools().isEmpty()) {
+                throw new LlmException("Thinking model overloaded");
+            }
+            return new LlmResponse("Hello", List.of(), null);
+        });
+        AgentEngine engine = new AgentEngine(fakeLlm, toolRegistry, promptComposer, reporter, sessionService, clock)
+            .withEnableThinking(true);
+
+        AgentRunResult result = engine.run(
+            startRun(3),
+            createSession(),
+            "Say hello",
+            new ToolExecutionContext(workspace)
+        );
+
+        assertThat(result.success()).isFalse();
+        assertThat(result.errorReason()).contains("Thinking phase failed").contains("Thinking model overloaded");
+    }
+
+    @Test
+    void thinkingPhaseContentIncludedInActionContext() {
+        FakeLlmGateway fakeLlm = new FakeLlmGateway(req -> {
+            // In action phase, context should contain the thinking assistant message
+            boolean hasThinking = req.messages().stream()
+                .anyMatch(m -> m.role().name().equals("ASSISTANT") && m.content().equals("I will write a file"));
+            if (hasThinking) {
+                return new LlmResponse("Done", List.of(), null);
+            }
+            return new LlmResponse("I will write a file", List.of(), null);
+        });
+        AgentEngine engine = new AgentEngine(fakeLlm, toolRegistry, promptComposer, reporter, sessionService, clock)
+            .withEnableThinking(true);
+
+        AgentRunResult result = engine.run(
+            startRun(3),
+            createSession(),
+            "Write a file",
+            new ToolExecutionContext(workspace)
+        );
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.finalMessage()).isEqualTo("I will write a file\nDone");
+    }
+
+    @Test
+    void multipleToolCallsExecuteConcurrently() {
+        java.util.concurrent.atomic.AtomicInteger concurrentCount = new java.util.concurrent.atomic.AtomicInteger(0);
+        java.util.concurrent.atomic.AtomicInteger maxConcurrent = new java.util.concurrent.atomic.AtomicInteger(0);
+
+        AgentTool slowTool = new AgentTool() {
+            @Override
+            public String name() { return "slow_tool"; }
+            @Override
+            public ToolDefinition definition() {
+                return new ToolDefinition("slow_tool", "Slow tool", "{}");
+            }
+            @Override
+            public ToolResult execute(ToolCall call, ToolExecutionContext context) {
+                int current = concurrentCount.incrementAndGet();
+                maxConcurrent.updateAndGet(v -> Math.max(v, current));
+                try {
+                    Thread.sleep(100);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                concurrentCount.decrementAndGet();
+                return ToolResult.success(call.id(), "slow-result");
+            }
+        };
+
+        AgentTool fastTool = new AgentTool() {
+            @Override
+            public String name() { return "fast_tool"; }
+            @Override
+            public ToolDefinition definition() {
+                return new ToolDefinition("fast_tool", "Fast tool", "{}");
+            }
+            @Override
+            public ToolResult execute(ToolCall call, ToolExecutionContext context) {
+                int current = concurrentCount.incrementAndGet();
+                maxConcurrent.updateAndGet(v -> Math.max(v, current));
+                try {
+                    Thread.sleep(50);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                concurrentCount.decrementAndGet();
+                return ToolResult.success(call.id(), "fast-result");
+            }
+        };
+
+        ToolRegistry concurrentRegistry = new ToolRegistry(List.of(slowTool, fastTool));
+        FakeLlmGateway fakeLlm = new FakeLlmGateway(List.of(
+            new LlmResponse("", List.of(
+                ToolCall.of("t1", "slow_tool", "{}"),
+                ToolCall.of("t2", "fast_tool", "{}")
+            ), null),
+            new LlmResponse("done", List.of(), null)
+        ));
+        AgentEngine engine = new AgentEngine(fakeLlm, concurrentRegistry, promptComposer, reporter, sessionService, clock);
+
+        AgentRunResult result = engine.run(
+            startRun(3),
+            createSession(),
+            "Run concurrent tools",
+            new ToolExecutionContext(workspace)
+        );
+
+        assertThat(result.success()).isTrue();
+        // Both tools were actually concurrent at some point
+        assertThat(maxConcurrent.get()).isGreaterThanOrEqualTo(2);
+    }
+
+    @Test
+    void concurrentToolObservationsPreserveLlmOrder() {
+        AgentTool slowTool = new AgentTool() {
+            @Override
+            public String name() { return "slow_tool"; }
+            @Override
+            public ToolDefinition definition() {
+                return new ToolDefinition("slow_tool", "Slow tool", "{}");
+            }
+            @Override
+            public ToolResult execute(ToolCall call, ToolExecutionContext context) {
+                try {
+                    Thread.sleep(150);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                return ToolResult.success(call.id(), "slow-result");
+            }
+        };
+
+        AgentTool fastTool = new AgentTool() {
+            @Override
+            public String name() { return "fast_tool"; }
+            @Override
+            public ToolDefinition definition() {
+                return new ToolDefinition("fast_tool", "Fast tool", "{}");
+            }
+            @Override
+            public ToolResult execute(ToolCall call, ToolExecutionContext context) {
+                try {
+                    Thread.sleep(10);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                return ToolResult.success(call.id(), "fast-result");
+            }
+        };
+
+        ToolRegistry orderedRegistry = new ToolRegistry(List.of(slowTool, fastTool));
+        FakeLlmGateway fakeLlm = new FakeLlmGateway(List.of(
+            new LlmResponse("", List.of(
+                ToolCall.of("t1", "slow_tool", "{}"),
+                ToolCall.of("t2", "fast_tool", "{}")
+            ), null),
+            new LlmResponse("done", List.of(), null)
+        ));
+        AgentEngine engine = new AgentEngine(fakeLlm, orderedRegistry, promptComposer, reporter, sessionService, clock);
+
+        AgentRunResult result = engine.run(
+            startRun(3),
+            createSession(),
+            "Test order",
+            new ToolExecutionContext(workspace)
+        );
+
+        assertThat(result.success()).isTrue();
+        List<Message> memory = sessionService.getWorkingMemory("session-1");
+        // user + assistant(t1,t2) + observation(t1) + observation(t2) + assistant(final)
+        assertThat(memory).hasSize(5);
+        Message obs1 = memory.get(2);
+        Message obs2 = memory.get(3);
+        assertThat(obs1.toolCallId()).isEqualTo("t1");
+        assertThat(obs1.content()).isEqualTo("slow-result");
+        assertThat(obs2.toolCallId()).isEqualTo("t2");
+        assertThat(obs2.content()).isEqualTo("fast-result");
+    }
+
+    @Test
+    void concurrentToolExecutionWithFailurePreservesOrderAndRecovery() {
+        AgentTool failingTool = new AgentTool() {
+            @Override
+            public String name() { return "edit_file"; }
+            @Override
+            public ToolDefinition definition() {
+                return new ToolDefinition("edit_file", "Failing tool", "{}");
+            }
+            @Override
+            public ToolResult execute(ToolCall call, ToolExecutionContext context) {
+                try {
+                    Thread.sleep(50);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                return ToolResult.failure(call.id(), "oldText not found in file: src.txt");
+            }
+        };
+
+        AgentTool okTool = new AgentTool() {
+            @Override
+            public String name() { return "ok_tool"; }
+            @Override
+            public ToolDefinition definition() {
+                return new ToolDefinition("ok_tool", "OK tool", "{}");
+            }
+            @Override
+            public ToolResult execute(ToolCall call, ToolExecutionContext context) {
+                try {
+                    Thread.sleep(10);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                return ToolResult.success(call.id(), "ok-result");
+            }
+        };
+
+        ToolRegistry mixedRegistry = new ToolRegistry(List.of(failingTool, okTool));
+        FakeLlmGateway fakeLlm = new FakeLlmGateway(List.of(
+            new LlmResponse("", List.of(
+                ToolCall.of("t1", "edit_file", "{}"),
+                ToolCall.of("t2", "ok_tool", "{}")
+            ), null),
+            new LlmResponse("Handled", List.of(), null)
+        ));
+        AgentEngine engine = new AgentEngine(fakeLlm, mixedRegistry, promptComposer, reporter, sessionService, clock);
+
+        AgentRunResult result = engine.run(
+            startRun(3),
+            createSession(),
+            "Test mixed",
+            new ToolExecutionContext(workspace)
+        );
+
+        assertThat(result.success()).isFalse();
+        List<Message> memory = sessionService.getWorkingMemory("session-1");
+        // user + assistant(t1,t2) + observation(t1 with recovery) + observation(t2) + assistant(final)
+        assertThat(memory).hasSize(5);
+        assertThat(memory.get(2).toolCallId()).isEqualTo("t1");
+        assertThat(memory.get(2).content()).contains("oldText not found").contains("[Recovery hint]");
+        assertThat(memory.get(3).toolCallId()).isEqualTo("t2");
+        assertThat(memory.get(3).content()).isEqualTo("ok-result");
     }
 
     private AgentRun startRun(int maxTurns) {

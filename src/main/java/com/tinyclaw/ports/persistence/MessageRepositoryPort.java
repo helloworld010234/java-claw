@@ -1,6 +1,5 @@
 package com.tinyclaw.ports.persistence;
 
-import com.tinyclaw.application.persistence.AgentMessageDto;
 import com.tinyclaw.domain.message.Message;
 
 import java.util.List;

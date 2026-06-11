@@ -1,7 +1,7 @@
 package com.tinyclaw.application.approval;
 
-import com.tinyclaw.application.persistence.AgentRunSummary;
-import com.tinyclaw.application.persistence.ToolExecutionRecord;
+import com.tinyclaw.ports.persistence.AgentRunSummary;
+import com.tinyclaw.ports.persistence.ToolExecutionRecord;
 import com.tinyclaw.application.tool.ToolRegistry;
 import com.tinyclaw.domain.approval.ApprovalRequest;
 import com.tinyclaw.domain.approval.ApprovalStatus;

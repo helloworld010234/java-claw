@@ -1,6 +1,5 @@
 package com.tinyclaw.ports.persistence;
 
-import com.tinyclaw.application.persistence.AgentRunSummary;
 import com.tinyclaw.domain.run.AgentRun;
 import com.tinyclaw.domain.session.Session;
 

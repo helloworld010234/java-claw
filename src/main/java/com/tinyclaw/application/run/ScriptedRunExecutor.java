@@ -2,7 +2,7 @@ package com.tinyclaw.application.run;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.tinyclaw.application.persistence.ToolExecutionRecord;
+import com.tinyclaw.ports.persistence.ToolExecutionRecord;
 import com.tinyclaw.application.tool.ToolRegistry;
 import com.tinyclaw.domain.common.DomainGuards;
 import com.tinyclaw.domain.message.ToolCall;

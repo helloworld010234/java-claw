@@ -1,4 +1,4 @@
-package com.tinyclaw.application.persistence;
+package com.tinyclaw.ports.persistence;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;

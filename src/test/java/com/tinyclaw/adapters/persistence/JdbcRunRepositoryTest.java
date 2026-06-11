@@ -1,6 +1,6 @@
 package com.tinyclaw.adapters.persistence;
 
-import com.tinyclaw.application.persistence.AgentRunSummary;
+import com.tinyclaw.ports.persistence.AgentRunSummary;
 import com.tinyclaw.domain.run.AgentRun;
 import com.tinyclaw.domain.run.AgentRunStatus;
 import com.tinyclaw.domain.session.Session;

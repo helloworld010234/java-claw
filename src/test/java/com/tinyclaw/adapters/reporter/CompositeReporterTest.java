@@ -1,10 +1,10 @@
 package com.tinyclaw.adapters.reporter;
 
-import com.tinyclaw.application.engine.AgentRunResult;
 import com.tinyclaw.domain.message.ToolCall;
 import com.tinyclaw.domain.message.ToolResult;
 import com.tinyclaw.domain.message.Usage;
 import com.tinyclaw.ports.reporter.Reporter;
+import com.tinyclaw.ports.reporter.RunReportResult;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -22,7 +22,7 @@ class CompositeReporterTest {
         @Override public void onAssistantMessage(String runId, String content) { }
         @Override public void onToolCall(String runId, ToolCall toolCall) { }
         @Override public void onToolResult(String runId, ToolResult toolResult) { }
-        @Override public void onRunCompleted(String runId, AgentRunResult result) { }
+        @Override public void onRunCompleted(String runId, RunReportResult result) { }
         @Override public void onRunFailed(String runId, String reason) { }
         @Override public void onUsage(String runId, String sessionId, Usage usage, String model) {
             events.add("usage:" + runId + ":" + usage.promptTokens());
@@ -49,7 +49,7 @@ class CompositeReporterTest {
             @Override public void onAssistantMessage(String runId, String content) { }
             @Override public void onToolCall(String runId, ToolCall toolCall) { }
             @Override public void onToolResult(String runId, ToolResult toolResult) { }
-            @Override public void onRunCompleted(String runId, AgentRunResult result) { }
+            @Override public void onRunCompleted(String runId, RunReportResult result) { }
             @Override public void onRunFailed(String runId, String reason) { }
             @Override public void onUsage(String runId, String sessionId, Usage usage, String model) { }
         };
@@ -69,7 +69,7 @@ class CompositeReporterTest {
             @Override public void onAssistantMessage(String runId, String content) { }
             @Override public void onToolCall(String runId, ToolCall toolCall) { }
             @Override public void onToolResult(String runId, ToolResult toolResult) { }
-            @Override public void onRunCompleted(String runId, AgentRunResult result) { }
+            @Override public void onRunCompleted(String runId, RunReportResult result) { }
             @Override public void onRunFailed(String runId, String reason) { }
             @Override public void onUsage(String runId, String sessionId, Usage usage, String model) { }
         };

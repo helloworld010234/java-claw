@@ -9,17 +9,17 @@ class BootstrapArgsTest {
     @Test
     void tinyclawSpaceSeparatedBecomesEqualsForm() {
         String[] result = BootstrapArgs.normalize(
-            new String[]{"--tinyclaw.approval.required-tools", "shell_command"}
+            new String[]{"--tiny-claw.approval.required-tools", "shell_command"}
         );
-        assertThat(result).containsExactly("--tinyclaw.approval.required-tools=shell_command");
+        assertThat(result).containsExactly("--tiny-claw.approval.required-tools=shell_command");
     }
 
     @Test
     void tinyclawEqualsFormUnchanged() {
         String[] result = BootstrapArgs.normalize(
-            new String[]{"--tinyclaw.approval.required-tools=shell_command"}
+            new String[]{"--tiny-claw.approval.required-tools=shell_command"}
         );
-        assertThat(result).containsExactly("--tinyclaw.approval.required-tools=shell_command");
+        assertThat(result).containsExactly("--tiny-claw.approval.required-tools=shell_command");
     }
 
     @Test
@@ -125,7 +125,7 @@ class BootstrapArgsTest {
         String[] result = BootstrapArgs.normalize(
             new String[]{
                 "run",
-                "--tinyclaw.approval.required-tools", "shell_command",
+                "--tiny-claw.approval.required-tools", "shell_command",
                 "--prompt", "Hello",
                 "--spring.profiles.active", "test",
                 "--dir", "D:\\work",
@@ -134,7 +134,7 @@ class BootstrapArgsTest {
         );
         assertThat(result).containsExactly(
             "run",
-            "--tinyclaw.approval.required-tools=shell_command",
+            "--tiny-claw.approval.required-tools=shell_command",
             "--prompt", "Hello",
             "--spring.profiles.active=test",
             "--dir", "D:\\work",

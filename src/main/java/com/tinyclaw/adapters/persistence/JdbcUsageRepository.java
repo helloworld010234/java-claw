@@ -1,6 +1,6 @@
 package com.tinyclaw.adapters.persistence;
 
-import com.tinyclaw.application.persistence.UsageRecord;
+import com.tinyclaw.ports.persistence.UsageRecord;
 import com.tinyclaw.ports.persistence.UsageRepositoryPort;
 import org.springframework.jdbc.core.JdbcTemplate;
 

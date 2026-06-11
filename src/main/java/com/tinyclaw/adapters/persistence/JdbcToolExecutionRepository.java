@@ -1,6 +1,6 @@
 package com.tinyclaw.adapters.persistence;
 
-import com.tinyclaw.application.persistence.ToolExecutionRecord;
+import com.tinyclaw.ports.persistence.ToolExecutionRecord;
 import com.tinyclaw.ports.persistence.ToolExecutionRepositoryPort;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;

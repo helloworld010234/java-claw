@@ -1,7 +1,7 @@
 package com.tinyclaw.adapters.web;
 
 import com.tinyclaw.adapters.web.dto.RunStatusResponse;
-import com.tinyclaw.application.persistence.AgentRunSummary;
+import com.tinyclaw.ports.persistence.AgentRunSummary;
 import com.tinyclaw.ports.persistence.RunRepositoryPort;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;

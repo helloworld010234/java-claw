@@ -78,4 +78,34 @@ class ToolConfigurationTest {
         assertThat(result.error()).isTrue();
         assertThat(result.output()).contains("Approval required");
     }
+
+    @Test
+    void writeFileExecutionRequiresApprovalByDefault(@TempDir Path workspace) {
+        ToolCall call = ToolCall.of(
+            "call-1",
+            "write_file",
+            "{\"path\":\"out.txt\",\"content\":\"data\"}"
+        );
+        ToolExecutionContext context = new ToolExecutionContext(workspace, "run-1", "sess-1");
+
+        ToolResult result = toolRegistry.execute(call, context);
+
+        assertThat(result.error()).isTrue();
+        assertThat(result.output()).contains("Approval required");
+    }
+
+    @Test
+    void shellCommandExecutionRequiresApprovalByDefault(@TempDir Path workspace) {
+        ToolCall call = ToolCall.of(
+            "call-1",
+            "shell_command",
+            "{\"command\":\"echo hi\"}"
+        );
+        ToolExecutionContext context = new ToolExecutionContext(workspace, "run-1", "sess-1");
+
+        ToolResult result = toolRegistry.execute(call, context);
+
+        assertThat(result.error()).isTrue();
+        assertThat(result.output()).contains("Approval required");
+    }
 }

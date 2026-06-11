@@ -1,6 +1,5 @@
 package com.tinyclaw.ports.reporter;
 
-import com.tinyclaw.application.engine.AgentRunResult;
 import com.tinyclaw.domain.message.ToolCall;
 import com.tinyclaw.domain.message.ToolResult;
 import com.tinyclaw.domain.message.Usage;
@@ -21,7 +20,7 @@ public interface Reporter {
 
     void onToolResult(String runId, ToolResult toolResult);
 
-    void onRunCompleted(String runId, AgentRunResult result);
+    void onRunCompleted(String runId, RunReportResult result);
 
     void onRunFailed(String runId, String reason);
 

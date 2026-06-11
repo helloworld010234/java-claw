@@ -4,7 +4,7 @@ import com.tinyclaw.adapters.persistence.JdbcApprovalRepository;
 import com.tinyclaw.adapters.persistence.JdbcRunRepository;
 import com.tinyclaw.adapters.persistence.JdbcToolExecutionRepository;
 import com.tinyclaw.application.approval.ApprovalResumeService;
-import com.tinyclaw.application.persistence.ToolExecutionRecord;
+import com.tinyclaw.ports.persistence.ToolExecutionRecord;
 import com.tinyclaw.application.tool.DangerousCommandPolicy;
 import com.tinyclaw.application.tool.ToolRegistry;
 import com.tinyclaw.domain.approval.ApprovalRequest;

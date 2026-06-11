@@ -4,7 +4,7 @@ import com.tinyclaw.adapters.web.dto.StartRunRequest;
 import com.tinyclaw.application.engine.AgentEngine;
 import com.tinyclaw.application.engine.AgentRunResult;
 import com.tinyclaw.application.run.AgentRunExecutionService;
-import com.tinyclaw.application.workspace.WorkspaceSecurityService;
+import com.tinyclaw.adapters.workspace.WorkspaceSecurityService;
 import com.tinyclaw.domain.session.Session;
 import com.tinyclaw.ports.persistence.ToolExecutionRepositoryPort;
 import com.tinyclaw.ports.session.SessionService;
@@ -86,7 +86,7 @@ public class AgentRunController {
 
         Session session = Session.create(sessionId, workspace.toString(), Instant.now());
 
-        ToolExecutionContext context = new ToolExecutionContext(workspace);
+        ToolExecutionContext context = new ToolExecutionContext(workspace, runId, sessionId);
 
         CompletableFuture.runAsync(() -> {
             try {

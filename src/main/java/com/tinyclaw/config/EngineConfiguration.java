@@ -1,6 +1,6 @@
 package com.tinyclaw.config;
 
-import com.tinyclaw.adapters.observability.NoOpTraceReporter;
+import com.tinyclaw.ports.observability.NoOpTraceReporter;
 import com.tinyclaw.adapters.filesystem.FilesystemWorkspaceGuideLoader;
 import com.tinyclaw.adapters.llm.fake.FakeLlmGateway;
 import com.tinyclaw.adapters.reporter.ConsoleReporter;
@@ -121,6 +121,7 @@ public class EngineConfiguration {
                             TraceReporter traceReporter,
                             AgentProperties agentProperties) {
         return new AgentEngine(llmGateway, toolRegistry, promptComposer, reporter, sessionService, clock,
-            agentContextBuilder, toolFailureRecoveryAdvisor, null, traceReporter, agentProperties.getMaxToolCallsPerTurn());
+            agentContextBuilder, toolFailureRecoveryAdvisor, null, traceReporter, agentProperties.getMaxToolCallsPerTurn(),
+            agentProperties.isEnableThinking());
     }
 }

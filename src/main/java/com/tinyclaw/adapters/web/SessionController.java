@@ -1,6 +1,6 @@
 package com.tinyclaw.adapters.web;
 
-import com.tinyclaw.application.persistence.AgentMessageDto;
+import com.tinyclaw.ports.persistence.AgentMessageDto;
 import com.tinyclaw.domain.message.Message;
 import com.tinyclaw.ports.persistence.MessageRepositoryPort;
 import org.springframework.http.ResponseEntity;

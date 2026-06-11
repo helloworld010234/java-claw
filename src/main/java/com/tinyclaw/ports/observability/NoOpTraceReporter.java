@@ -1,16 +1,15 @@
-package com.tinyclaw.application.observability;
-
-import com.tinyclaw.ports.observability.TraceReporter;
+package com.tinyclaw.ports.observability;
 
 import java.util.Map;
 
 /**
- * No-op {@link TraceReporter} implementation for the application layer.
+ * No-op {@link TraceReporter} implementation for environments where tracing is disabled.
  *
- * <p>Used as a safe default when no tracing adapter is configured.
- * All methods are intentionally empty.</p>
+ * <p>All methods are empty operations. This class lives in the {@code ports} layer
+ * so that {@code application} code can fall back to a safe default without
+ * depending on {@code adapters}.</p>
  */
-public class NoOpTraceReporter implements TraceReporter {
+public final class NoOpTraceReporter implements TraceReporter {
 
     private static final SpanHandle INSTANCE = new NoOpSpanHandle();
 

@@ -6,6 +6,7 @@ import com.tinyclaw.domain.message.ToolCall;
 import com.tinyclaw.domain.message.ToolResult;
 import com.tinyclaw.ports.observability.AgentMetricsPort;
 import com.tinyclaw.ports.tool.AgentTool;
+import com.tinyclaw.ports.tool.ToolCatalog;
 import com.tinyclaw.ports.tool.ToolExecutionContext;
 import com.tinyclaw.ports.tool.ToolExecutionDecision;
 import com.tinyclaw.ports.tool.ToolExecutionDecisionType;
@@ -21,7 +22,7 @@ import java.util.stream.Collectors;
 /**
  * Application-level registry for agent tools.
  */
-public class ToolRegistry {
+public class ToolRegistry implements ToolCatalog {
 
     private final Map<String, AgentTool> tools;
     private final List<ToolExecutionPolicy> policies;

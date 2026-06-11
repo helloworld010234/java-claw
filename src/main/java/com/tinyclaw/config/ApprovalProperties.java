@@ -7,7 +7,7 @@ import java.util.List;
 /**
  * Configuration for the approval gate.
  */
-@ConfigurationProperties(prefix = "tinyclaw.approval")
+@ConfigurationProperties(prefix = "tiny-claw.approval")
 public class ApprovalProperties {
 
     private boolean enabled = true;

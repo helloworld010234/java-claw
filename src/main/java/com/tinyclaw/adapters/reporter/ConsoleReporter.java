@@ -1,10 +1,10 @@
 package com.tinyclaw.adapters.reporter;
 
-import com.tinyclaw.application.engine.AgentRunResult;
 import com.tinyclaw.domain.message.ToolCall;
 import com.tinyclaw.domain.message.ToolResult;
 import com.tinyclaw.domain.message.Usage;
 import com.tinyclaw.ports.reporter.Reporter;
+import com.tinyclaw.ports.reporter.RunReportResult;
 
 /**
  * Reporter that prints events to standard output for CLI usage.
@@ -35,7 +35,7 @@ public class ConsoleReporter implements Reporter {
     }
 
     @Override
-    public void onRunCompleted(String runId, AgentRunResult result) {
+    public void onRunCompleted(String runId, RunReportResult result) {
         System.out.println("[run " + runId + "] Completed in " + result.turnCount() + " turn(s).");
     }
 

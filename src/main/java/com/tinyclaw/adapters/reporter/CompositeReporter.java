@@ -1,10 +1,10 @@
 package com.tinyclaw.adapters.reporter;
 
-import com.tinyclaw.application.engine.AgentRunResult;
 import com.tinyclaw.domain.message.ToolCall;
 import com.tinyclaw.domain.message.ToolResult;
 import com.tinyclaw.domain.message.Usage;
 import com.tinyclaw.ports.reporter.Reporter;
+import com.tinyclaw.ports.reporter.RunReportResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -64,7 +64,7 @@ public class CompositeReporter implements Reporter {
     }
 
     @Override
-    public void onRunCompleted(String runId, AgentRunResult result) {
+    public void onRunCompleted(String runId, RunReportResult result) {
         for (Reporter r : reporters) {
             try {
                 r.onRunCompleted(runId, result);

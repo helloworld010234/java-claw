@@ -3,7 +3,7 @@ package com.tinyclaw.application.run;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tinyclaw.application.engine.AgentEngine;
 import com.tinyclaw.application.engine.AgentRunResult;
-import com.tinyclaw.application.persistence.AgentMessageDto;
+import com.tinyclaw.ports.persistence.AgentMessageDto;
 import com.tinyclaw.domain.message.Message;
 import com.tinyclaw.domain.message.Role;
 import com.tinyclaw.domain.run.AgentRun;
@@ -43,7 +43,7 @@ class AgentRunExecutionServiceFailureTest {
             this.failedTurnCount = turnCount;
             this.failedReason = reason;
         }
-        @Override public Optional<com.tinyclaw.application.persistence.AgentRunSummary> findById(String runId) { return Optional.empty(); }
+        @Override public Optional<com.tinyclaw.ports.persistence.AgentRunSummary> findById(String runId) { return Optional.empty(); }
     }
 
     static class InMemoryMessageRepository implements MessageRepositoryPort {

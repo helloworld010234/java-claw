@@ -4,12 +4,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tinyclaw.adapters.llm.fake.FakeLlmGateway;
 import com.tinyclaw.application.engine.AgentEngine;
 import com.tinyclaw.application.engine.AgentRunResult;
-import com.tinyclaw.application.persistence.AgentMessageDto;
+import com.tinyclaw.ports.persistence.AgentMessageDto;
 import com.tinyclaw.domain.message.Message;
 import com.tinyclaw.domain.message.Role;
 import com.tinyclaw.domain.run.AgentRun;
 import com.tinyclaw.domain.session.Session;
-import com.tinyclaw.application.persistence.UsageRecord;
+import com.tinyclaw.ports.persistence.UsageRecord;
 import com.tinyclaw.ports.persistence.MessageRepositoryPort;
 import com.tinyclaw.ports.persistence.RunRepositoryPort;
 import com.tinyclaw.ports.persistence.UsageRepositoryPort;
@@ -47,7 +47,7 @@ class AgentRunExecutionServiceTest {
             this.failedTurnCount = turnCount;
             this.failedReason = reason;
         }
-        @Override public Optional<com.tinyclaw.application.persistence.AgentRunSummary> findById(String runId) { return Optional.empty(); }
+        @Override public Optional<com.tinyclaw.ports.persistence.AgentRunSummary> findById(String runId) { return Optional.empty(); }
     }
 
     static class InMemoryMessageRepository implements MessageRepositoryPort {
@@ -169,5 +169,38 @@ class AgentRunExecutionServiceTest {
         // Should have previous message + new messages
         List<AgentMessageDto> allMessages = msgRepo.findByRunId("run-1");
         assertThat(allMessages).isNotEmpty();
+    }
+
+    @Test
+    void passesMaxTurnsToEngine() {
+        InMemoryRunRepository runRepo = new InMemoryRunRepository();
+        SessionService sessionService = new com.tinyclaw.adapters.session.InMemorySessionService();
+        Reporter reporter = new com.tinyclaw.adapters.reporter.NoOpReporter();
+        ObjectMapper objectMapper = new ObjectMapper();
+
+        AgentRunExecutionService service = new AgentRunExecutionService(
+            runRepo, null, sessionService, objectMapper, reporter
+        );
+
+        // Use a fake engine that records the run's maxTurns
+        com.tinyclaw.ports.llm.LlmGateway fakeLlm = request -> {
+            throw new com.tinyclaw.ports.llm.LlmException("stop");
+        };
+        AgentEngine engine = new AgentEngine(
+            fakeLlm,
+            new com.tinyclaw.application.tool.ToolRegistry(List.of()),
+            new com.tinyclaw.application.engine.PromptComposer(),
+            reporter,
+            sessionService
+        );
+
+        Session session = Session.create("session-turns", "/tmp", Instant.now());
+        ToolExecutionContext context = new ToolExecutionContext(java.nio.file.Paths.get("/tmp"));
+
+        AgentRunResult result = service.execute("run-turns", session, "hello", context, engine, "fake", null, 7);
+
+        assertThat(result).isNotNull();
+        assertThat(runRepo.savedRun).isNotNull();
+        assertThat(runRepo.savedRun.maxTurns()).isEqualTo(7);
     }
 }

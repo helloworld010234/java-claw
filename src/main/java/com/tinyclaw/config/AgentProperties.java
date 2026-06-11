@@ -12,6 +12,7 @@ public class AgentProperties {
     private int maxToolCallsPerTurn = 8;
     private int maxRuntimeSeconds = 600;
     private boolean planMode = false;
+    private boolean enableThinking = false;
 
     public int getMaxTurns() {
         return maxTurns;
@@ -43,5 +44,13 @@ public class AgentProperties {
 
     public void setPlanMode(boolean planMode) {
         this.planMode = planMode;
+    }
+
+    public boolean isEnableThinking() {
+        return enableThinking;
+    }
+
+    public void setEnableThinking(boolean enableThinking) {
+        this.enableThinking = enableThinking;
     }
 }

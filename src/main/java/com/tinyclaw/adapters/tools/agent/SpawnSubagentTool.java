@@ -6,7 +6,7 @@ import com.tinyclaw.domain.common.DomainGuards;
 import com.tinyclaw.domain.message.ToolCall;
 import com.tinyclaw.domain.message.ToolDefinition;
 import com.tinyclaw.domain.message.ToolResult;
-import com.tinyclaw.application.tool.ToolRegistry;
+import com.tinyclaw.ports.tool.ToolCatalog;
 import com.tinyclaw.ports.engine.SubagentRunner;
 import com.tinyclaw.ports.reporter.Reporter;
 import com.tinyclaw.ports.tool.AgentTool;
@@ -43,16 +43,16 @@ public class SpawnSubagentTool implements AgentTool {
 
     private final SubagentRunner subagentRunner;
     private final ObjectMapper objectMapper;
-    private final com.tinyclaw.application.tool.ToolRegistry readOnlyRegistry;
+    private final ToolCatalog readOnlyCatalog;
     private final Reporter reporter;
 
     public SpawnSubagentTool(@Lazy SubagentRunner subagentRunner,
                              ObjectMapper objectMapper,
-                             @Qualifier("readOnlyToolRegistry") ToolRegistry readOnlyRegistry,
+                             @Qualifier("readOnlyToolRegistry") ToolCatalog readOnlyCatalog,
                              Reporter reporter) {
         this.subagentRunner = DomainGuards.requireNonNull(subagentRunner, "subagentRunner");
         this.objectMapper = DomainGuards.requireNonNull(objectMapper, "objectMapper");
-        this.readOnlyRegistry = DomainGuards.requireNonNull(readOnlyRegistry, "readOnlyRegistry");
+        this.readOnlyCatalog = DomainGuards.requireNonNull(readOnlyCatalog, "readOnlyCatalog");
         this.reporter = reporter;
     }
 
@@ -84,7 +84,7 @@ public class SpawnSubagentTool implements AgentTool {
             return ToolResult.failure(call.id(), "task_prompt must not be blank");
         }
 
-        String report = subagentRunner.runSub(taskPrompt, readOnlyRegistry, reporter, context.workspaceRoot().toString());
+        String report = subagentRunner.runSub(taskPrompt, readOnlyCatalog, reporter, context.workspaceRoot().toString());
 
         return ToolResult.success(call.id(), "【子智能体探索报告】:\n" + report);
     }

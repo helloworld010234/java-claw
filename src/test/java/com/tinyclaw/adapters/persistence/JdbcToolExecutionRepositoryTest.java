@@ -1,6 +1,6 @@
 package com.tinyclaw.adapters.persistence;
 
-import com.tinyclaw.application.persistence.ToolExecutionRecord;
+import com.tinyclaw.ports.persistence.ToolExecutionRecord;
 import com.tinyclaw.domain.run.AgentRun;
 import com.tinyclaw.domain.session.Session;
 import org.junit.jupiter.api.Test;

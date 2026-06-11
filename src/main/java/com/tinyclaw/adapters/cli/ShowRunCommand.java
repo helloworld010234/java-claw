@@ -1,9 +1,9 @@
 package com.tinyclaw.adapters.cli;
 
-import com.tinyclaw.application.persistence.AgentMessageDto;
-import com.tinyclaw.application.persistence.AgentRunSummary;
-import com.tinyclaw.application.persistence.ToolExecutionRecord;
-import com.tinyclaw.application.persistence.UsageRecord;
+import com.tinyclaw.ports.persistence.AgentMessageDto;
+import com.tinyclaw.ports.persistence.AgentRunSummary;
+import com.tinyclaw.ports.persistence.ToolExecutionRecord;
+import com.tinyclaw.ports.persistence.UsageRecord;
 import com.tinyclaw.ports.persistence.MessageRepositoryPort;
 import com.tinyclaw.ports.persistence.RunRepositoryPort;
 import com.tinyclaw.ports.persistence.ToolExecutionRepositoryPort;

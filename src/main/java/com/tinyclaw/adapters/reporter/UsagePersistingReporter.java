@@ -1,13 +1,13 @@
 package com.tinyclaw.adapters.reporter;
 
-import com.tinyclaw.application.engine.AgentRunResult;
-import com.tinyclaw.application.persistence.UsageRecord;
+import com.tinyclaw.ports.persistence.UsageRecord;
 import com.tinyclaw.config.TinyClawModelProperties;
 import com.tinyclaw.domain.message.ToolCall;
 import com.tinyclaw.domain.message.ToolResult;
 import com.tinyclaw.domain.message.Usage;
 import com.tinyclaw.ports.persistence.UsageRepositoryPort;
 import com.tinyclaw.ports.reporter.Reporter;
+import com.tinyclaw.ports.reporter.RunReportResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -64,6 +64,6 @@ public class UsagePersistingReporter implements Reporter {
     @Override public void onAssistantMessage(String runId, String content) { }
     @Override public void onToolCall(String runId, ToolCall toolCall) { }
     @Override public void onToolResult(String runId, ToolResult toolResult) { }
-    @Override public void onRunCompleted(String runId, AgentRunResult result) { }
+    @Override public void onRunCompleted(String runId, RunReportResult result) { }
     @Override public void onRunFailed(String runId, String reason) { }
 }

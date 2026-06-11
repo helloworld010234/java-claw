@@ -1,6 +1,6 @@
 package com.tinyclaw.adapters.reporter;
 
-import com.tinyclaw.application.persistence.UsageRecord;
+import com.tinyclaw.ports.persistence.UsageRecord;
 import com.tinyclaw.config.TinyClawModelProperties;
 import com.tinyclaw.domain.message.Usage;
 import com.tinyclaw.ports.persistence.UsageRepositoryPort;

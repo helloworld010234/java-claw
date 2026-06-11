@@ -1,7 +1,5 @@
 package com.tinyclaw.ports.persistence;
 
-import com.tinyclaw.application.persistence.UsageRecord;
-
 import java.util.List;
 
 /**

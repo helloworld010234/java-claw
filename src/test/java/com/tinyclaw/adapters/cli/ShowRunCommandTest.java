@@ -133,7 +133,7 @@ class ShowRunCommandTest {
         runRepository.saveRunStarted(run, "agent", "test prompt");
         runRepository.saveRunCompleted(run.id(), 2, Instant.now());
 
-        usageRepository.save(new com.tinyclaw.application.persistence.UsageRecord(
+        usageRepository.save(new com.tinyclaw.ports.persistence.UsageRecord(
             "show-usage-run", "show-usage-sess", "fake", 100, 50, null, true, Instant.now()
         ));
 
@@ -153,7 +153,7 @@ class ShowRunCommandTest {
         runRepository.saveRunStarted(run, "agent", "test prompt");
         runRepository.saveRunCompleted(run.id(), 2, Instant.now());
 
-        usageRepository.save(new com.tinyclaw.application.persistence.UsageRecord(
+        usageRepository.save(new com.tinyclaw.ports.persistence.UsageRecord(
             "show-detail-run", "show-detail-sess", "fake", 200, 80, null, true, Instant.now()
         ));
 

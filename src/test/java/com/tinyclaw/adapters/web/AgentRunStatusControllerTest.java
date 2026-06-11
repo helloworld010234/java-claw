@@ -1,6 +1,6 @@
 package com.tinyclaw.adapters.web;
 
-import com.tinyclaw.application.persistence.AgentRunSummary;
+import com.tinyclaw.ports.persistence.AgentRunSummary;
 import com.tinyclaw.domain.run.AgentRunStatus;
 import com.tinyclaw.ports.persistence.RunRepositoryPort;
 import org.junit.jupiter.api.Test;

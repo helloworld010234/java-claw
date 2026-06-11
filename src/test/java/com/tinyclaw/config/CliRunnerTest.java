@@ -76,7 +76,7 @@ class CliRunnerTest {
             "--session", "smoke",
             "--spring.profiles.active=test",
             "--spring.main.web-application-type=none",
-            "--tinyclaw.approval.required-tools=shell_command"
+            "--tiny-claw.approval.required-tools=shell_command"
         );
         assertThat(cliRunner.getExitCode()).isZero();
     }
@@ -89,7 +89,7 @@ class CliRunnerTest {
             "--session", "smoke",
             "--spring.profiles.active", "test",
             "--spring.main.web-application-type", "none",
-            "--tinyclaw.approval.required-tools", "shell_command"
+            "--tiny-claw.approval.required-tools", "shell_command"
         );
         assertThat(cliRunner.getExitCode()).isZero();
     }
@@ -238,7 +238,7 @@ class CliRunnerTest {
             "--server.port=0",
             "--management.endpoints.web.exposure.include=*",
             "--logging.level.org.springframework=debug",
-            "--tinyclaw.approval.required-tools=shell_command",
+            "--tiny-claw.approval.required-tools=shell_command",
             "--tiny-claw.model.enabled=true"
         );
         assertThat(cliRunner.getExitCode()).isZero();

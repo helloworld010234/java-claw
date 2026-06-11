@@ -1,6 +1,6 @@
 package com.tinyclaw.application.engine;
 
-import com.tinyclaw.application.persistence.ToolExecutionRecord;
+import com.tinyclaw.ports.persistence.ToolExecutionRecord;
 import com.tinyclaw.application.tool.ToolRegistry;
 import com.tinyclaw.domain.common.DomainGuards;
 import com.tinyclaw.domain.message.Message;
@@ -18,6 +18,7 @@ import com.tinyclaw.ports.llm.LlmResponse;
 import com.tinyclaw.ports.persistence.ToolExecutionRepositoryPort;
 import com.tinyclaw.ports.reporter.Reporter;
 import com.tinyclaw.ports.session.SessionService;
+import com.tinyclaw.ports.tool.ToolCatalog;
 import com.tinyclaw.ports.tool.ToolExecutionContext;
 
 import java.nio.file.Path;
@@ -28,12 +29,20 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 
 /**
  * Core ReAct agent engine.
  *
  * <p>Pure application-layer orchestrator with zero Spring dependencies.
  * The loop: build context → LLM → tool calls → tool results → next LLM turn.</p>
+ *
+ * <p>Supports optional Thinking/Action two-phase execution (Go baseline alignment):
+ * <ul>
+ *   <li>Thinking phase: no tools exposed, produces intermediate reasoning</li>
+ *   <li>Action phase: tools exposed, may return tool calls</li>
+ *   <li>Final assistant message merges both phases' content</li>
+ * </ul></p>
  */
 public class AgentEngine implements SubagentRunner {
 
@@ -60,6 +69,7 @@ public class AgentEngine implements SubagentRunner {
     private final String modelName;
     private final com.tinyclaw.ports.observability.TraceReporter traceReporter;
     private final int maxToolCallsPerTurn;
+    private final boolean enableThinking;
 
     public AgentEngine(LlmGateway llmGateway,
                        ToolRegistry toolRegistry,
@@ -114,7 +124,7 @@ public class AgentEngine implements SubagentRunner {
                        String modelName) {
         this(llmGateway, toolRegistry, promptComposer, reporter, sessionService, clock,
              agentContextBuilder, recoveryAdvisor, modelName,
-             new com.tinyclaw.application.observability.NoOpTraceReporter(), 8);
+             new com.tinyclaw.ports.observability.NoOpTraceReporter(), 8, false);
     }
 
     public AgentEngine(LlmGateway llmGateway,
@@ -128,7 +138,7 @@ public class AgentEngine implements SubagentRunner {
                        String modelName,
                        com.tinyclaw.ports.observability.TraceReporter traceReporter) {
         this(llmGateway, toolRegistry, promptComposer, reporter, sessionService, clock,
-             agentContextBuilder, recoveryAdvisor, modelName, traceReporter, 8);
+             agentContextBuilder, recoveryAdvisor, modelName, traceReporter, 8, false);
     }
 
     public AgentEngine(LlmGateway llmGateway,
@@ -142,6 +152,22 @@ public class AgentEngine implements SubagentRunner {
                        String modelName,
                        com.tinyclaw.ports.observability.TraceReporter traceReporter,
                        int maxToolCallsPerTurn) {
+        this(llmGateway, toolRegistry, promptComposer, reporter, sessionService, clock,
+             agentContextBuilder, recoveryAdvisor, modelName, traceReporter, maxToolCallsPerTurn, false);
+    }
+
+    public AgentEngine(LlmGateway llmGateway,
+                       ToolRegistry toolRegistry,
+                       PromptComposer promptComposer,
+                       Reporter reporter,
+                       SessionService sessionService,
+                       Clock clock,
+                       AgentContextBuilder agentContextBuilder,
+                       ToolFailureRecoveryAdvisor recoveryAdvisor,
+                       String modelName,
+                       com.tinyclaw.ports.observability.TraceReporter traceReporter,
+                       int maxToolCallsPerTurn,
+                       boolean enableThinking) {
         this.llmGateway = DomainGuards.requireNonNull(llmGateway, "llmGateway");
         this.toolRegistry = DomainGuards.requireNonNull(toolRegistry, "toolRegistry");
         this.promptComposer = DomainGuards.requireNonNull(promptComposer, "promptComposer");
@@ -151,8 +177,9 @@ public class AgentEngine implements SubagentRunner {
         this.agentContextBuilder = DomainGuards.requireNonNull(agentContextBuilder, "agentContextBuilder");
         this.recoveryAdvisor = DomainGuards.requireNonNull(recoveryAdvisor, "recoveryAdvisor");
         this.modelName = modelName != null && !modelName.isBlank() ? modelName : "";
-        this.traceReporter = traceReporter != null ? traceReporter : new com.tinyclaw.application.observability.NoOpTraceReporter();
+        this.traceReporter = traceReporter != null ? traceReporter : new com.tinyclaw.ports.observability.NoOpTraceReporter();
         this.maxToolCallsPerTurn = maxToolCallsPerTurn > 0 ? maxToolCallsPerTurn : 8;
+        this.enableThinking = enableThinking;
     }
 
     /**
@@ -161,7 +188,7 @@ public class AgentEngine implements SubagentRunner {
      */
     public AgentEngine withLlmGateway(LlmGateway llmGateway) {
         return new AgentEngine(llmGateway, toolRegistry, promptComposer, reporter, sessionService, clock,
-            agentContextBuilder, recoveryAdvisor, modelName, traceReporter, maxToolCallsPerTurn);
+            agentContextBuilder, recoveryAdvisor, modelName, traceReporter, maxToolCallsPerTurn, enableThinking);
     }
 
     /**
@@ -170,7 +197,16 @@ public class AgentEngine implements SubagentRunner {
      */
     public AgentEngine withModelName(String modelName) {
         return new AgentEngine(llmGateway, toolRegistry, promptComposer, reporter, sessionService, clock,
-            agentContextBuilder, recoveryAdvisor, modelName, traceReporter, maxToolCallsPerTurn);
+            agentContextBuilder, recoveryAdvisor, modelName, traceReporter, maxToolCallsPerTurn, enableThinking);
+    }
+
+    /**
+     * Returns a new AgentEngine instance with Thinking enabled,
+     * reusing all other dependencies.
+     */
+    public AgentEngine withEnableThinking(boolean enableThinking) {
+        return new AgentEngine(llmGateway, toolRegistry, promptComposer, reporter, sessionService, clock,
+            agentContextBuilder, recoveryAdvisor, modelName, traceReporter, maxToolCallsPerTurn, enableThinking);
     }
 
     /**
@@ -230,8 +266,40 @@ public class AgentEngine implements SubagentRunner {
                     WORKING_MEMORY_LIMIT
                 );
 
+                // Phase 1: Thinking (optional)
+                String thinkingContent = "";
+                if (enableThinking) {
+                    LlmRequest thinkRequest = new LlmRequest(
+                        modelName,
+                        messages,
+                        List.of(), // no tools during thinking
+                        LlmRequestOptions.defaults()
+                    );
+                    LlmResponse thinkResponse;
+                    try {
+                        thinkResponse = llmGateway.generate(thinkRequest);
+                        if (thinkResponse.usage() != null) {
+                            reporter.onUsage(run.id(), session.id(), thinkResponse.usage(), modelName);
+                            totalUsage = accumulateUsage(totalUsage, thinkResponse.usage());
+                        }
+                    } catch (Exception e) {
+                        String reason = "Thinking phase failed: " + e.getMessage();
+                        currentRun = currentRun.fail(reason, clock.instant());
+                        reporter.onRunFailed(currentRun.id(), reason);
+                        traceReporter.addAttribute(span, "error", reason);
+                        traceReporter.endSpan(span);
+                        return new AgentRunResult(false, lastAssistantContent, currentRun.currentTurn(), reason, totalUsage);
+                    }
+                    thinkingContent = thinkResponse.content();
+                    if (!thinkingContent.isBlank()) {
+                        messages = new ArrayList<>(messages);
+                        messages.add(Message.assistant(thinkingContent));
+                    }
+                }
+
+                // Phase 2: Action
                 List<ToolDefinition> availableTools = toolRegistry.availableTools();
-                LlmRequest request = new LlmRequest(
+                LlmRequest actionRequest = new LlmRequest(
                     modelName,
                     messages,
                     availableTools,
@@ -240,20 +308,14 @@ public class AgentEngine implements SubagentRunner {
 
                 LlmResponse response;
                 try {
-                    response = llmGateway.generate(request);
+                    response = llmGateway.generate(actionRequest);
                     if (response.usage() != null) {
                         reporter.onUsage(run.id(), session.id(), response.usage(), modelName);
-                        if (totalUsage == null) {
-                            totalUsage = response.usage();
-                        } else {
-                            totalUsage = new Usage(
-                                totalUsage.promptTokens() + response.usage().promptTokens(),
-                                totalUsage.completionTokens() + response.usage().completionTokens()
-                            );
-                        }
+                        totalUsage = accumulateUsage(totalUsage, response.usage());
                     }
                 } catch (Exception e) {
-                    String reason = "LLM generation failed: " + e.getMessage();
+                    String phaseLabel = enableThinking ? "Action phase" : "LLM generation";
+                    String reason = phaseLabel + " failed: " + e.getMessage();
                     currentRun = currentRun.fail(reason, clock.instant());
                     reporter.onRunFailed(currentRun.id(), reason);
                     traceReporter.addAttribute(span, "error", reason);
@@ -261,29 +323,37 @@ public class AgentEngine implements SubagentRunner {
                     return new AgentRunResult(false, lastAssistantContent, currentRun.currentTurn(), reason, totalUsage);
                 }
 
-                lastAssistantContent = response.content();
+                // Merge thinking + action content for the final assistant message
+                String mergedContent;
+                if (thinkingContent.isBlank()) {
+                    mergedContent = response.content();
+                } else {
+                    mergedContent = thinkingContent + "\n" + response.content();
+                }
+                mergedContent = mergedContent.trim();
+                lastAssistantContent = mergedContent;
 
                 Message assistantMsg;
                 if (response.hasToolCalls()) {
-                    assistantMsg = Message.assistantWithToolCalls(response.content(), response.toolCalls());
+                    assistantMsg = Message.assistantWithToolCalls(mergedContent, response.toolCalls());
                 } else {
-                    assistantMsg = Message.assistant(response.content());
+                    assistantMsg = Message.assistant(mergedContent);
                 }
                 sessionService.appendMessage(session.id(), assistantMsg);
-                reporter.onAssistantMessage(currentRun.id(), response.content());
+                reporter.onAssistantMessage(currentRun.id(), mergedContent);
 
                 if (!response.hasToolCalls()) {
                     if (anyToolFailed) {
                         currentRun = currentRun.fail(toolFailureReason, clock.instant());
-                        AgentRunResult result = new AgentRunResult(false, response.content(), currentRun.currentTurn(), toolFailureReason, totalUsage);
+                        AgentRunResult result = new AgentRunResult(false, mergedContent, currentRun.currentTurn(), toolFailureReason, totalUsage);
                         reporter.onRunFailed(currentRun.id(), toolFailureReason);
                         traceReporter.addAttribute(span, "error", toolFailureReason);
                         traceReporter.endSpan(span);
                         return result;
                     }
                     currentRun = currentRun.complete(clock.instant());
-                    AgentRunResult result = new AgentRunResult(true, response.content(), currentRun.currentTurn(), null, totalUsage);
-                    reporter.onRunCompleted(currentRun.id(), result);
+                    AgentRunResult result = new AgentRunResult(true, mergedContent, currentRun.currentTurn(), null, totalUsage);
+                    reporter.onRunCompleted(currentRun.id(), new com.tinyclaw.ports.reporter.RunReportResult(result.success(), result.finalMessage(), result.turnCount(), result.errorReason(), result.totalUsage()));
                     traceReporter.endSpan(span);
                     return result;
                 }
@@ -297,11 +367,22 @@ public class AgentEngine implements SubagentRunner {
                     return new AgentRunResult(false, lastAssistantContent, currentRun.currentTurn(), reason, totalUsage);
                 }
 
-                for (ToolCall toolCall : response.toolCalls()) {
+                // Execute tool calls concurrently, preserving order for observations
+                List<ToolCall> toolCalls = response.toolCalls();
+                List<CompletableFuture<ToolResult>> futures = new ArrayList<>(toolCalls.size());
+                for (ToolCall toolCall : toolCalls) {
                     reporter.onToolCall(currentRun.id(), toolCall);
-                    Instant startedAt = clock.instant();
-                    ToolResult toolResult = toolRegistry.execute(toolCall, toolContext);
+                    CompletableFuture<ToolResult> future = CompletableFuture.supplyAsync(() ->
+                        toolRegistry.execute(toolCall, toolContext)
+                    );
+                    futures.add(future);
+                }
+
+                for (int i = 0; i < toolCalls.size(); i++) {
+                    ToolCall toolCall = toolCalls.get(i);
+                    ToolResult toolResult = futures.get(i).join();
                     Instant completedAt = clock.instant();
+
                     reporter.onToolResult(currentRun.id(), toolResult);
 
                     traceReporter.recordEvent(span, "tool.execute", Map.of(
@@ -319,7 +400,7 @@ public class AgentEngine implements SubagentRunner {
                             toolCall.argumentsJson(),
                             toolResult.output(),
                             toolResult.error(),
-                            startedAt,
+                            clock.instant(), // startedAt approximated to completion time for async execution
                             completedAt
                         );
                         toolExecutionRepository.append(currentRun.id(), record);
@@ -354,15 +435,25 @@ public class AgentEngine implements SubagentRunner {
         }
     }
 
+    private Usage accumulateUsage(Usage total, Usage delta) {
+        if (total == null) {
+            return delta;
+        }
+        return new Usage(
+            total.promptTokens() + delta.promptTokens(),
+            total.completionTokens() + delta.completionTokens()
+        );
+    }
+
     /**
      * 运行子 Agent 执行探索任务。
      *
      * <p>子 Agent 使用独立的临时 Session，只读工具集，最多运行 {@value #MAX_SUB_TURNS} 轮。</p>
      */
     @Override
-    public String runSub(String taskPrompt, ToolRegistry readOnlyRegistry, Reporter reporter, String workDir) {
+    public String runSub(String taskPrompt, ToolCatalog readOnlyCatalog, Reporter reporter, String workDir) {
         DomainGuards.requireNonBlank(taskPrompt, "taskPrompt");
-        DomainGuards.requireNonNull(readOnlyRegistry, "readOnlyRegistry");
+        DomainGuards.requireNonNull(readOnlyCatalog, "readOnlyCatalog");
         DomainGuards.requireNonBlank(workDir, "workDir");
 
         var span = traceReporter.startSpan("AgentEngine.runSub", Map.of(
@@ -378,7 +469,7 @@ public class AgentEngine implements SubagentRunner {
             turnCount++;
             traceReporter.addAttribute(span, "sub.turn", String.valueOf(turnCount));
 
-            List<ToolDefinition> availableTools = readOnlyRegistry.availableTools();
+            List<ToolDefinition> availableTools = readOnlyCatalog.availableTools();
             LlmRequest request = new LlmRequest(
                 modelName,
                 contextHistory,
@@ -413,7 +504,7 @@ public class AgentEngine implements SubagentRunner {
                     reporter.onToolCall("subagent", ToolCall.of(toolCall.id(), "[Subagent] " + toolCall.name(), toolCall.argumentsJson()));
                 }
 
-                ToolResult result = readOnlyRegistry.execute(toolCall, new ToolExecutionContext(Path.of(workDir)));
+                ToolResult result = readOnlyCatalog.execute(toolCall, new ToolExecutionContext(Path.of(workDir)));
 
                 traceReporter.recordEvent(span, "subagent.tool.execute", Map.of(
                     "tool.name", toolCall.name(),

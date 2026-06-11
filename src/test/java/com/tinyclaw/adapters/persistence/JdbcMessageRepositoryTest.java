@@ -1,7 +1,7 @@
 package com.tinyclaw.adapters.persistence;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.tinyclaw.application.persistence.AgentMessageDto;
+import com.tinyclaw.ports.persistence.AgentMessageDto;
 import com.tinyclaw.domain.message.Message;
 import com.tinyclaw.domain.message.Role;
 import com.tinyclaw.domain.message.ToolCall;
