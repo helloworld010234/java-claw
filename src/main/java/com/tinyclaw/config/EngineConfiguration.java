@@ -1,5 +1,6 @@
 package com.tinyclaw.config;
 
+import com.tinyclaw.adapters.filesystem.FilesystemWorkspaceGuideLoader;
 import com.tinyclaw.adapters.llm.fake.FakeLlmGateway;
 import com.tinyclaw.adapters.reporter.ConsoleReporter;
 import com.tinyclaw.adapters.session.InMemorySessionService;
@@ -14,6 +15,7 @@ import com.tinyclaw.ports.llm.LlmGateway;
 import com.tinyclaw.ports.llm.LlmException;
 import com.tinyclaw.ports.reporter.Reporter;
 import com.tinyclaw.ports.session.SessionService;
+import com.tinyclaw.ports.workspace.WorkspaceGuideLoader;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -63,6 +65,12 @@ public class EngineConfiguration {
     @Bean
     ToolFailureRecoveryAdvisor toolFailureRecoveryAdvisor() {
         return new ToolFailureRecoveryAdvisor();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(WorkspaceGuideLoader.class)
+    WorkspaceGuideLoader workspaceGuideLoader() {
+        return new FilesystemWorkspaceGuideLoader();
     }
 
     @Bean
