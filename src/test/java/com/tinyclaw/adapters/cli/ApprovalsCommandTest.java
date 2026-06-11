@@ -65,8 +65,10 @@ class ApprovalsCommandTest {
         originalErr = System.err;
         System.setOut(new PrintStream(out));
         System.setErr(new PrintStream(err));
+        jdbcTemplate.update("DELETE FROM usage_records");
         jdbcTemplate.update("DELETE FROM tool_executions");
         jdbcTemplate.update("DELETE FROM approval_requests");
+        jdbcTemplate.update("DELETE FROM agent_messages");
         jdbcTemplate.update("DELETE FROM agent_runs");
         jdbcTemplate.update("DELETE FROM agent_sessions");
     }

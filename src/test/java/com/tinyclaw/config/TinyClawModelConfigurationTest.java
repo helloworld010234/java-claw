@@ -11,6 +11,8 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 import com.tinyclaw.application.tool.ToolRegistry;
+import com.tinyclaw.ports.reporter.Reporter;
+import com.tinyclaw.adapters.reporter.NoOpReporter;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -67,6 +69,7 @@ class TinyClawModelConfigurationTest {
             .withUserConfiguration(MeterRegistryConfig.class)
             .withBean(ChatModel.class, () -> mock(ChatModel.class))
             .withBean(ToolRegistry.class, () -> new ToolRegistry(java.util.List.of()))
+            .withBean(Reporter.class, NoOpReporter::new)
             .run(context -> {
                 assertThat(context).hasSingleBean(LlmGateway.class);
                 assertThat(context).hasBean("realLlmGateway");
@@ -82,6 +85,7 @@ class TinyClawModelConfigurationTest {
             .withUserConfiguration(MeterRegistryConfig.class)
             .withBean(ChatModel.class, () -> mock(ChatModel.class))
             .withBean(ToolRegistry.class, () -> new ToolRegistry(java.util.List.of()))
+            .withBean(Reporter.class, NoOpReporter::new)
             .run(context -> {
                 assertThat(context).hasSingleBean(LlmGateway.class);
                 assertThat(context).hasBean("defaultLlmGateway");
@@ -96,6 +100,7 @@ class TinyClawModelConfigurationTest {
             .withUserConfiguration(MeterRegistryConfig.class)
             .withBean(ChatModel.class, () -> mock(ChatModel.class))
             .withBean(ToolRegistry.class, () -> new ToolRegistry(java.util.List.of()))
+            .withBean(Reporter.class, NoOpReporter::new)
             .run(context -> {
                 assertThat(context).hasSingleBean(LlmGateway.class);
                 assertThat(context).hasBean("defaultLlmGateway");

@@ -23,7 +23,7 @@ class ShellCommandToolTest {
 
     @Test
     void successfulCommandReturnsSuccess() {
-        String command = isWindows() ? "Write-Output 'hello'" : "echo hello";
+        String command = isWindows() ? "echo hello" : "echo hello";
         ToolCall call = ToolCall.of("c1", "shell_command", "{\"command\":\"" + command + "\"}");
 
         ToolResult result = tool.execute(call, new ToolExecutionContext(tempDir));
@@ -34,7 +34,7 @@ class ShellCommandToolTest {
 
     @Test
     void nonZeroExitCodeReturnsFailure() {
-        String command = isWindows() ? "exit 1" : "false";
+        String command = isWindows() ? "exit /b 1" : "false";
         ToolCall call = ToolCall.of("c1", "shell_command", "{\"command\":\"" + command + "\"}");
 
         ToolResult result = tool.execute(call, new ToolExecutionContext(tempDir));
@@ -67,7 +67,7 @@ class ShellCommandToolTest {
     void commandExecutesInWorkspaceDirectory() throws Exception {
         Files.writeString(tempDir.resolve("marker.txt"), "found");
         String command = isWindows()
-            ? "Get-Content marker.txt"
+            ? "type marker.txt"
             : "cat marker.txt";
         ToolCall call = ToolCall.of("c1", "shell_command", "{\"command\":\"" + command + "\"}");
 
@@ -81,7 +81,7 @@ class ShellCommandToolTest {
     void commandTimesOutAndReturnsFailure() {
         ShellCommandTool shortTimeoutTool = new ShellCommandTool(new ObjectMapper(), 1);
         String command = isWindows()
-            ? "Start-Sleep -Seconds 2"
+            ? "ping -n 3 127.0.0.1 >nul"
             : "sleep 2";
         ToolCall call = ToolCall.of("c1", "shell_command", "{\"command\":\"" + command + "\"}");
 
@@ -101,7 +101,7 @@ class ShellCommandToolTest {
         Files.writeString(tempDir.resolve("big.txt"), sb.toString());
 
         String command = isWindows()
-            ? "Get-Content big.txt"
+            ? "type big.txt"
             : "cat big.txt";
         ToolCall call = ToolCall.of("c1", "shell_command", "{\"command\":\"" + command + "\"}");
 

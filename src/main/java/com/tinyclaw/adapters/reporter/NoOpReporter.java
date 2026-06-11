@@ -3,6 +3,7 @@ package com.tinyclaw.adapters.reporter;
 import com.tinyclaw.application.engine.AgentRunResult;
 import com.tinyclaw.domain.message.ToolCall;
 import com.tinyclaw.domain.message.ToolResult;
+import com.tinyclaw.domain.message.Usage;
 import com.tinyclaw.ports.reporter.Reporter;
 
 /**
@@ -37,6 +38,11 @@ public class NoOpReporter implements Reporter {
 
     @Override
     public void onRunFailed(String runId, String reason) {
+        // no-op
+    }
+
+    @Override
+    public void onUsage(String runId, String sessionId, Usage usage, String model) {
         // no-op
     }
 }

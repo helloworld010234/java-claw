@@ -3,6 +3,8 @@ package com.tinyclaw.adapters.cli;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tinyclaw.application.engine.AgentEngine;
 import com.tinyclaw.application.engine.AgentRunResult;
+import com.tinyclaw.adapters.reporter.NoOpReporter;
+import com.tinyclaw.application.run.AgentRunExecutionService;
 import com.tinyclaw.application.run.ScriptedRunExecutor;
 import com.tinyclaw.config.TinyClawModelProperties;
 import com.tinyclaw.domain.message.Message;
@@ -12,7 +14,6 @@ import com.tinyclaw.domain.message.Usage;
 import com.tinyclaw.ports.llm.LlmGateway;
 import com.tinyclaw.ports.llm.LlmRequest;
 import com.tinyclaw.ports.llm.LlmResponse;
-import com.tinyclaw.ports.persistence.MessageRepositoryPort;
 import com.tinyclaw.ports.persistence.RunRepositoryPort;
 import com.tinyclaw.ports.persistence.ToolExecutionRepositoryPort;
 import com.tinyclaw.ports.session.SessionService;
@@ -35,12 +36,14 @@ class RunCommandRealEngineTest {
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final SessionService sessionService = mock(SessionService.class);
     private final RunRepositoryPort runRepository = mock(RunRepositoryPort.class);
-    private final MessageRepositoryPort messageRepository = mock(MessageRepositoryPort.class);
     private final ToolExecutionRepositoryPort toolExecutionRepository = mock(ToolExecutionRepositoryPort.class);
 
     private RunCommand createCommand(TinyClawModelProperties properties) {
-        return new RunCommand(scriptedRunExecutor, agentEngine, objectMapper,
-            sessionService, runRepository, messageRepository, toolExecutionRepository, properties);
+        return new RunCommand(
+            new AgentRunExecutionService(runRepository, null, sessionService, objectMapper, new NoOpReporter()),
+            scriptedRunExecutor, agentEngine, objectMapper,
+            runRepository, toolExecutionRepository, properties,
+            new com.tinyclaw.config.AgentProperties());
     }
 
     @Test

@@ -139,7 +139,7 @@ public class ShellCommandTool implements AgentTool {
 
     private ProcessBuilder createProcessBuilder(String command) {
         if (isWindows()) {
-            return new ProcessBuilder("powershell", "-NoProfile", "-NonInteractive", "-Command", command);
+            return new ProcessBuilder("cmd", "/c", command);
         }
         return new ProcessBuilder("sh", "-c", command);
     }

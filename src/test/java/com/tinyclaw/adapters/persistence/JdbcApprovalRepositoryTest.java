@@ -32,6 +32,7 @@ class JdbcApprovalRepositoryTest {
 
     @BeforeEach
     void cleanUp() {
+        jdbcTemplate.update("DELETE FROM usage_records");
         jdbcTemplate.update("DELETE FROM approval_requests");
         jdbcTemplate.update("DELETE FROM tool_executions");
         jdbcTemplate.update("DELETE FROM agent_messages");

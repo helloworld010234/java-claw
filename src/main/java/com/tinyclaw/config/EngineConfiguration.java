@@ -1,9 +1,11 @@
 package com.tinyclaw.config;
 
+import com.tinyclaw.adapters.observability.NoOpTraceReporter;
 import com.tinyclaw.adapters.filesystem.FilesystemWorkspaceGuideLoader;
 import com.tinyclaw.adapters.llm.fake.FakeLlmGateway;
 import com.tinyclaw.adapters.reporter.ConsoleReporter;
 import com.tinyclaw.adapters.session.InMemorySessionService;
+import com.tinyclaw.adapters.workspace.FilesystemSkillLoader;
 import com.tinyclaw.application.engine.AgentContextBuilder;
 import com.tinyclaw.application.engine.AgentEngine;
 import com.tinyclaw.application.engine.ContextCompactor;
@@ -13,8 +15,10 @@ import com.tinyclaw.application.engine.WorkingMemorySelector;
 import com.tinyclaw.application.tool.ToolRegistry;
 import com.tinyclaw.ports.llm.LlmGateway;
 import com.tinyclaw.ports.llm.LlmException;
+import com.tinyclaw.ports.observability.TraceReporter;
 import com.tinyclaw.ports.reporter.Reporter;
 import com.tinyclaw.ports.session.SessionService;
+import com.tinyclaw.ports.workspace.SkillLoader;
 import com.tinyclaw.ports.workspace.WorkspaceGuideLoader;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -32,7 +36,7 @@ import java.time.Clock;
  * configuration (e.g., Spring AI adapter) or a test {@code @TestConfiguration}.</p>
  */
 @Configuration
-@EnableConfigurationProperties(TinyClawModelProperties.class)
+@EnableConfigurationProperties({TinyClawModelProperties.class, AgentProperties.class})
 public class EngineConfiguration {
 
     @Bean
@@ -41,8 +45,10 @@ public class EngineConfiguration {
     }
 
     @Bean
-    PromptComposer promptComposer() {
-        return new PromptComposer();
+    PromptComposer promptComposer(WorkspaceGuideLoader workspaceGuideLoader,
+                                  SkillLoader skillLoader) {
+        boolean planMode = false;
+        return new PromptComposer(planMode, workspaceGuideLoader, skillLoader);
     }
 
     @Bean
@@ -74,15 +80,15 @@ public class EngineConfiguration {
     }
 
     @Bean
-    @ConditionalOnMissingBean(SessionService.class)
-    SessionService sessionService() {
-        return new InMemorySessionService();
+    @ConditionalOnMissingBean(SkillLoader.class)
+    SkillLoader skillLoader() {
+        return new FilesystemSkillLoader();
     }
 
     @Bean
-    @ConditionalOnMissingBean(Reporter.class)
-    Reporter reporter() {
-        return new ConsoleReporter();
+    @ConditionalOnMissingBean(SessionService.class)
+    SessionService sessionService() {
+        return new InMemorySessionService();
     }
 
     @Bean
@@ -98,6 +104,12 @@ public class EngineConfiguration {
     }
 
     @Bean
+    @ConditionalOnMissingBean(TraceReporter.class)
+    TraceReporter traceReporter() {
+        return new NoOpTraceReporter();
+    }
+
+    @Bean
     AgentEngine agentEngine(LlmGateway llmGateway,
                             ToolRegistry toolRegistry,
                             PromptComposer promptComposer,
@@ -105,8 +117,10 @@ public class EngineConfiguration {
                             SessionService sessionService,
                             Clock clock,
                             AgentContextBuilder agentContextBuilder,
-                            ToolFailureRecoveryAdvisor toolFailureRecoveryAdvisor) {
+                            ToolFailureRecoveryAdvisor toolFailureRecoveryAdvisor,
+                            TraceReporter traceReporter,
+                            AgentProperties agentProperties) {
         return new AgentEngine(llmGateway, toolRegistry, promptComposer, reporter, sessionService, clock,
-            agentContextBuilder, toolFailureRecoveryAdvisor);
+            agentContextBuilder, toolFailureRecoveryAdvisor, null, traceReporter, agentProperties.getMaxToolCallsPerTurn());
     }
 }

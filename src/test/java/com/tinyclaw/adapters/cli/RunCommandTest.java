@@ -8,6 +8,7 @@ import com.tinyclaw.adapters.tools.filesystem.ReadFileTool;
 import com.tinyclaw.adapters.tools.filesystem.WriteFileTool;
 import com.tinyclaw.application.engine.AgentEngine;
 import com.tinyclaw.application.engine.PromptComposer;
+import com.tinyclaw.application.run.AgentRunExecutionService;
 import com.tinyclaw.application.run.ScriptedRunExecutor;
 import com.tinyclaw.application.tool.ToolRegistry;
 import com.tinyclaw.config.TinyClawModelProperties;
@@ -52,14 +53,14 @@ class RunCommandTest {
             dummyLlm, registry, new PromptComposer(), new NoOpReporter(), sessionService
         );
         command = new RunCommand(
+            new AgentRunExecutionService(null, null, sessionService, new ObjectMapper(), new NoOpReporter()),
             new ScriptedRunExecutor(registry, new ObjectMapper()),
             agentEngine,
             new ObjectMapper(),
-            sessionService,
             null,
             null,
-            null,
-            new TinyClawModelProperties()
+            new TinyClawModelProperties(),
+            new com.tinyclaw.config.AgentProperties()
         );
         out = new ByteArrayOutputStream();
         err = new ByteArrayOutputStream();

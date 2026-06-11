@@ -3,6 +3,7 @@ package com.tinyclaw.adapters.cli;
 import com.tinyclaw.adapters.persistence.JdbcMessageRepository;
 import com.tinyclaw.adapters.persistence.JdbcRunRepository;
 import com.tinyclaw.adapters.persistence.JdbcToolExecutionRepository;
+import com.tinyclaw.adapters.persistence.JdbcUsageRepository;
 import com.tinyclaw.domain.run.AgentRun;
 import com.tinyclaw.domain.session.Session;
 import org.junit.jupiter.api.BeforeEach;
@@ -31,6 +32,9 @@ class ShowRunCommandTest {
     @Autowired
     private JdbcToolExecutionRepository toolExecutionRepository;
 
+    @Autowired
+    private JdbcUsageRepository usageRepository;
+
     private ShowRunCommand command;
     private ByteArrayOutputStream out;
     private ByteArrayOutputStream err;
@@ -39,7 +43,7 @@ class ShowRunCommandTest {
 
     @BeforeEach
     void setUp() {
-        command = new ShowRunCommand(runRepository, messageRepository, toolExecutionRepository);
+        command = new ShowRunCommand(runRepository, messageRepository, toolExecutionRepository, usageRepository);
         out = new ByteArrayOutputStream();
         err = new ByteArrayOutputStream();
         originalOut = System.out;
@@ -103,5 +107,63 @@ class ShowRunCommandTest {
 
         assertThat(exitCode).isEqualTo(2);
         assertThat(err.toString()).contains("Run not found");
+    }
+
+    @Test
+    void showRunWithoutUsageOutputsNone() {
+        Session session = Session.create("show-no-usage-sess", "/tmp", Instant.now());
+        AgentRun run = AgentRun.start("show-no-usage-run", "show-no-usage-sess", 3, Instant.now());
+        runRepository.saveSession(session);
+        runRepository.saveRunStarted(run, "agent", "test prompt");
+        runRepository.saveRunCompleted(run.id(), 1, Instant.now());
+
+        int exitCode = commandLine().execute("--run-id", "show-no-usage-run");
+        restoreStreams();
+
+        assertThat(exitCode).isZero();
+        String output = out.toString();
+        assertThat(output).contains("usage: none");
+    }
+
+    @Test
+    void showRunWithUsageOutputsSummary() {
+        Session session = Session.create("show-usage-sess", "/tmp", Instant.now());
+        AgentRun run = AgentRun.start("show-usage-run", "show-usage-sess", 3, Instant.now());
+        runRepository.saveSession(session);
+        runRepository.saveRunStarted(run, "agent", "test prompt");
+        runRepository.saveRunCompleted(run.id(), 2, Instant.now());
+
+        usageRepository.save(new com.tinyclaw.application.persistence.UsageRecord(
+            "show-usage-run", "show-usage-sess", "fake", 100, 50, null, true, Instant.now()
+        ));
+
+        int exitCode = commandLine().execute("--run-id", "show-usage-run");
+        restoreStreams();
+
+        assertThat(exitCode).isZero();
+        String output = out.toString();
+        assertThat(output).contains("usage: 100 prompt / 50 completion tokens");
+    }
+
+    @Test
+    void showRunDetailWithUsageOutputsRecords() {
+        Session session = Session.create("show-detail-sess", "/tmp", Instant.now());
+        AgentRun run = AgentRun.start("show-detail-run", "show-detail-sess", 3, Instant.now());
+        runRepository.saveSession(session);
+        runRepository.saveRunStarted(run, "agent", "test prompt");
+        runRepository.saveRunCompleted(run.id(), 2, Instant.now());
+
+        usageRepository.save(new com.tinyclaw.application.persistence.UsageRecord(
+            "show-detail-run", "show-detail-sess", "fake", 200, 80, null, true, Instant.now()
+        ));
+
+        int exitCode = commandLine().execute("--run-id", "show-detail-run", "--detail");
+        restoreStreams();
+
+        assertThat(exitCode).isZero();
+        String output = out.toString();
+        assertThat(output).contains("usage:");
+        assertThat(output).contains("200 prompt / 80 completion tokens");
+        assertThat(output).contains("total: 200 prompt / 80 completion tokens");
     }
 }

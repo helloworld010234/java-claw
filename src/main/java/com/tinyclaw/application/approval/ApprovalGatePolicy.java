@@ -32,18 +32,31 @@ public class ApprovalGatePolicy implements ToolExecutionPolicy {
     private final List<String> requiredTools;
     private final ApprovalArgumentPreviewer previewer;
     private final Clock clock;
+    private final boolean enabled;
 
     public ApprovalGatePolicy(ApprovalRepositoryPort approvalRepository,
                               List<String> requiredTools,
                               Clock clock) {
+        this(approvalRepository, requiredTools, clock, true);
+    }
+
+    public ApprovalGatePolicy(ApprovalRepositoryPort approvalRepository,
+                              List<String> requiredTools,
+                              Clock clock,
+                              boolean enabled) {
         this.approvalRepository = approvalRepository;
         this.requiredTools = requiredTools != null ? List.copyOf(requiredTools) : List.of();
         this.previewer = new ApprovalArgumentPreviewer();
         this.clock = clock != null ? clock : Clock.systemUTC();
+        this.enabled = enabled;
     }
 
     @Override
     public ToolExecutionDecision decide(ToolCall call, ToolExecutionContext context) {
+        if (!enabled) {
+            return ToolExecutionDecision.allow();
+        }
+
         if (!requiredTools.contains(call.name())) {
             return ToolExecutionDecision.allow();
         }

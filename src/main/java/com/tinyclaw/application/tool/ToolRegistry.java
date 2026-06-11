@@ -4,6 +4,7 @@ import com.tinyclaw.domain.common.DomainGuards;
 import com.tinyclaw.domain.common.TinyClawDomainException;
 import com.tinyclaw.domain.message.ToolCall;
 import com.tinyclaw.domain.message.ToolResult;
+import com.tinyclaw.ports.observability.AgentMetricsPort;
 import com.tinyclaw.ports.tool.AgentTool;
 import com.tinyclaw.ports.tool.ToolExecutionContext;
 import com.tinyclaw.ports.tool.ToolExecutionDecision;
@@ -24,12 +25,17 @@ public class ToolRegistry {
 
     private final Map<String, AgentTool> tools;
     private final List<ToolExecutionPolicy> policies;
+    private final AgentMetricsPort agentMetrics;
 
     public ToolRegistry(List<AgentTool> tools) {
-        this(tools, List.of());
+        this(tools, List.of(), null);
     }
 
     public ToolRegistry(List<AgentTool> tools, List<ToolExecutionPolicy> policies) {
+        this(tools, policies, null);
+    }
+
+    public ToolRegistry(List<AgentTool> tools, List<ToolExecutionPolicy> policies, AgentMetricsPort agentMetrics) {
         DomainGuards.requireNonNull(tools, "tools");
         DomainGuards.requireNonNull(policies, "policies");
         this.tools = tools.stream()
@@ -39,6 +45,7 @@ public class ToolRegistry {
                 this::rejectDuplicate
             ));
         this.policies = List.copyOf(policies);
+        this.agentMetrics = agentMetrics;
     }
 
     public Optional<AgentTool> find(String name) {
@@ -60,6 +67,9 @@ public class ToolRegistry {
 
         AgentTool tool = tools.get(call.name());
         if (tool == null) {
+            if (agentMetrics != null) {
+                agentMetrics.recordToolExecution(call.name(), false);
+            }
             return ToolResult.failure(call.id(), "Unknown tool: " + call.name());
         }
 
@@ -67,16 +77,29 @@ public class ToolRegistry {
         for (ToolExecutionPolicy policy : policies) {
             ToolExecutionDecision decision = policy.decide(call, context);
             if (decision.type() == ToolExecutionDecisionType.DENY) {
+                if (agentMetrics != null) {
+                    agentMetrics.recordToolExecution(call.name(), false);
+                }
                 return ToolResult.failure(call.id(), decision.reason());
             }
             if (decision.type() == ToolExecutionDecisionType.REQUIRE_APPROVAL) {
+                if (agentMetrics != null) {
+                    agentMetrics.recordToolExecution(call.name(), false);
+                }
                 return ToolResult.failure(call.id(), decision.reason());
             }
         }
 
         try {
-            return tool.execute(call, context);
+            ToolResult result = tool.execute(call, context);
+            if (agentMetrics != null) {
+                agentMetrics.recordToolExecution(call.name(), !result.error());
+            }
+            return result;
         } catch (Exception e) {
+            if (agentMetrics != null) {
+                agentMetrics.recordToolExecution(call.name(), false);
+            }
             return ToolResult.failure(call.id(), "Tool execution failed: " + e.getMessage());
         }
     }

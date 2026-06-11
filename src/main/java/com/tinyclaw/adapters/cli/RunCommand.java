@@ -4,22 +4,19 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tinyclaw.adapters.llm.fake.FakeLlmGateway;
 import com.tinyclaw.application.engine.AgentEngine;
 import com.tinyclaw.application.engine.AgentRunResult;
-import com.tinyclaw.application.persistence.AgentMessageDto;
+import com.tinyclaw.application.run.AgentRunExecutionService;
 import com.tinyclaw.application.run.ScriptedRunExecutor;
 import com.tinyclaw.application.run.ScriptedRunPlan;
 import com.tinyclaw.application.run.ScriptedRunResult;
 import com.tinyclaw.application.run.ScriptedRunStepResult;
+import com.tinyclaw.config.AgentProperties;
 import com.tinyclaw.config.TinyClawModelProperties;
 import com.tinyclaw.domain.common.DomainGuards;
-import com.tinyclaw.domain.message.Message;
-import com.tinyclaw.domain.message.Role;
 import com.tinyclaw.domain.message.Usage;
 import com.tinyclaw.domain.run.AgentRun;
 import com.tinyclaw.domain.session.Session;
-import com.tinyclaw.ports.persistence.MessageRepositoryPort;
 import com.tinyclaw.ports.persistence.RunRepositoryPort;
 import com.tinyclaw.ports.persistence.ToolExecutionRepositoryPort;
-import com.tinyclaw.ports.session.SessionService;
 import com.tinyclaw.ports.tool.ToolExecutionContext;
 import org.springframework.context.annotation.Scope;
 import org.springframework.stereotype.Component;
@@ -32,21 +29,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.Instant;
-import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.Callable;
 
-/**
- * CLI {@code run} command: executes a single agent task.
- *
- * <p>Three modes are supported (in priority order):</p>
- * <ul>
- *   <li>Plan file present: read the JSON plan and invoke tools in order.</li>
- *   <li>{@code --engine fake}: run the AgentEngine + FakeLlmGateway ReAct loop.</li>
- *   <li>Default: validate args, print task info and exit (legacy behaviour).</li>
- * </ul>
- */
 @Component
 @Scope("prototype")
 @Command(
@@ -56,64 +42,46 @@ import java.util.concurrent.Callable;
 )
 public class RunCommand implements Callable<Integer> {
 
-    private static final int DEFAULT_SESSION_MEMORY_LIMIT = 50;
-
+    private final AgentRunExecutionService runExecutionService;
     private final ScriptedRunExecutor scriptedRunExecutor;
     private final AgentEngine agentEngine;
     private final ObjectMapper objectMapper;
-    private final SessionService sessionService;
     private final RunRepositoryPort runRepository;
-    private final MessageRepositoryPort messageRepository;
     private final ToolExecutionRepositoryPort toolExecutionRepository;
     private final TinyClawModelProperties modelProperties;
+    private final AgentProperties agentProperties;
 
-    public RunCommand(ScriptedRunExecutor scriptedRunExecutor,
+    public RunCommand(AgentRunExecutionService runExecutionService,
+                      ScriptedRunExecutor scriptedRunExecutor,
                       AgentEngine agentEngine,
                       ObjectMapper objectMapper,
-                      SessionService sessionService,
                       RunRepositoryPort runRepository,
-                      MessageRepositoryPort messageRepository,
                       ToolExecutionRepositoryPort toolExecutionRepository,
-                      TinyClawModelProperties modelProperties) {
+                      TinyClawModelProperties modelProperties,
+                      AgentProperties agentProperties) {
+        this.runExecutionService = DomainGuards.requireNonNull(runExecutionService, "runExecutionService");
         this.scriptedRunExecutor = DomainGuards.requireNonNull(scriptedRunExecutor, "scriptedRunExecutor");
         this.agentEngine = DomainGuards.requireNonNull(agentEngine, "agentEngine");
         this.objectMapper = DomainGuards.requireNonNull(objectMapper, "objectMapper");
-        this.sessionService = DomainGuards.requireNonNull(sessionService, "sessionService");
         this.runRepository = runRepository;
-        this.messageRepository = messageRepository;
         this.toolExecutionRepository = toolExecutionRepository;
         this.modelProperties = modelProperties != null ? modelProperties : new TinyClawModelProperties();
+        this.agentProperties = agentProperties != null ? agentProperties : new AgentProperties();
     }
 
-    @Option(
-        names = {"--prompt"},
-        required = true,
-        description = "User prompt for the agent task"
-    )
+    @Option(names = {"--prompt"}, required = true, description = "User prompt for the agent task")
     private String prompt;
 
-    @Option(
-        names = {"--dir"},
-        description = "Workspace directory (default: current directory)"
-    )
+    @Option(names = {"--dir"}, description = "Workspace directory (default: current directory)")
     private String dir;
 
-    @Option(
-        names = {"--session"},
-        description = "Session ID (default: auto-generated UUID)"
-    )
+    @Option(names = {"--session"}, description = "Session ID (default: auto-generated UUID)")
     private String sessionId;
 
-    @Option(
-        names = {"--plan-file"},
-        description = "Path to a JSON plan file describing tool steps to execute"
-    )
+    @Option(names = {"--plan-file"}, description = "Path to a JSON plan file describing tool steps to execute")
     private String planFile;
 
-    @Option(
-        names = {"--engine"},
-        description = "Execution engine: none (default), fake, real"
-    )
+    @Option(names = {"--engine"}, description = "Execution engine: none (default), fake, real")
     private String engine;
 
     @Override
@@ -138,7 +106,6 @@ public class RunCommand implements Callable<Integer> {
             return 2;
         }
 
-        // Validate engine parameter before any routing
         if (engine != null && !engine.isBlank()
             && !"fake".equalsIgnoreCase(engine)
             && !"none".equalsIgnoreCase(engine)
@@ -147,22 +114,18 @@ public class RunCommand implements Callable<Integer> {
             return 2;
         }
 
-        // Priority 1: plan-file mode
         if (planFile != null && !planFile.isBlank()) {
             return runPlanFile(effectiveSessionId, workspace);
         }
 
-        // Priority 2: agent engine (real) mode
         if ("real".equalsIgnoreCase(engine)) {
-            return runRealAgentEngine(effectiveSessionId, workspace);
+            return runWithEngine(effectiveSessionId, workspace, "real");
         }
 
-        // Priority 3: agent engine (fake) mode
         if ("fake".equalsIgnoreCase(engine)) {
-            return runAgentEngine(effectiveSessionId, workspace);
+            return runWithEngine(effectiveSessionId, workspace, "fake");
         }
 
-        // Priority 4: legacy print-only mode (also handles --engine none)
         System.out.println("sessionId: " + effectiveSessionId);
         System.out.println("workspace: " + workspace.toAbsolutePath());
         System.out.println("prompt: " + prompt);
@@ -193,7 +156,7 @@ public class RunCommand implements Callable<Integer> {
 
         String runId = newRunId();
         Session session = Session.create(effectiveSessionId, workspace.toAbsolutePath().toString(), Instant.now());
-        AgentRun run = AgentRun.start(runId, effectiveSessionId, 5, Instant.now());
+        AgentRun run = AgentRun.start(runId, effectiveSessionId, agentProperties.getMaxTurns(), Instant.now());
 
         if (runRepository != null) {
             runRepository.saveSession(session);
@@ -222,8 +185,20 @@ public class RunCommand implements Callable<Integer> {
         return result.success() ? 0 : 1;
     }
 
-    private Integer runAgentEngine(String effectiveSessionId, Path workspace) {
-        String runId = newRunId();
+    private Integer runWithEngine(String effectiveSessionId, Path workspace, String engineType) {
+        if ("real".equalsIgnoreCase(engineType)) {
+            if (!modelProperties.isEnabled()) {
+                System.err.println("Real LLM engine is not enabled. To use --engine real, set the following:");
+                System.err.println("  tiny-claw.model.enabled=true");
+                System.err.println("  tiny-claw.model.api-key=<your-api-key>");
+                System.err.println("  tiny-claw.model.base-url=<optional-base-url>");
+                return 2;
+            }
+            if (modelProperties.getApiKey() == null || modelProperties.getApiKey().isBlank()) {
+                System.err.println("Real LLM engine requires an API key. Set tiny-claw.model.api-key or LLM_API_KEY environment variable.");
+                return 2;
+            }
+        }
 
         Session session;
         if (runRepository != null) {
@@ -236,54 +211,24 @@ public class RunCommand implements Callable<Integer> {
                     Instant.now()
                 ))
                 .orElseGet(() -> Session.create(effectiveSessionId, workspace.toAbsolutePath().toString(), Instant.now()));
-            runRepository.saveSession(session);
         } else {
             session = Session.create(effectiveSessionId, workspace.toAbsolutePath().toString(), Instant.now());
         }
 
-        AgentRun run = AgentRun.start(runId, effectiveSessionId, 5, Instant.now());
-        if (runRepository != null) {
-            runRepository.saveRunStarted(run, "agent", prompt);
-        }
+        String runId = newRunId();
+        ToolExecutionContext context = new ToolExecutionContext(workspace).withRun(runId, session.id());
 
-        int messagesBeforeCount;
-        if (messageRepository != null) {
-            List<AgentMessageDto> historyDtos = messageRepository.findBySessionId(session.id(), DEFAULT_SESSION_MEMORY_LIMIT);
-            List<Message> history = historyDtos.stream()
-                .map(dto -> dto.toMessage(objectMapper))
-                .toList();
-            sessionService.replaceMessages(session.id(), history);
-            messagesBeforeCount = history.size();
+        AgentEngine engine;
+        if ("fake".equalsIgnoreCase(engineType)) {
+            FakeLlmGateway fakeLlm = FakeLlmGateway.forPrompt(prompt);
+            engine = agentEngine.withLlmGateway(fakeLlm);
         } else {
-            messagesBeforeCount = sessionService.getWorkingMemory(session.id()).size();
+            engine = agentEngine.withModelName(modelProperties.getName());
         }
 
-        ToolExecutionContext context = new ToolExecutionContext(workspace).withRun(run.id(), session.id());
-        FakeLlmGateway fakeLlm = FakeLlmGateway.forPrompt(prompt);
-        AgentEngine fakeEngine = agentEngine.withLlmGateway(fakeLlm);
-        AgentRunResult result = fakeEngine.run(run, session, prompt, context, toolExecutionRepository);
-
-        // Persist only the messages that were added during this run
-        if (messageRepository != null) {
-            List<Message> messagesAfter = sessionService.getWorkingMemory(session.id());
-            List<Message> newMessages = messagesAfter.stream()
-                .skip(messagesBeforeCount)
-                .filter(m -> m.role() != Role.SYSTEM)
-                .toList();
-            for (Message m : newMessages) {
-                messageRepository.append(runId, session.id(), m);
-            }
-        }
-
-        if (result.success()) {
-            if (runRepository != null) {
-                runRepository.saveRunCompleted(run.id(), result.turnCount(), Instant.now());
-            }
-        } else {
-            if (runRepository != null) {
-                runRepository.saveRunFailed(run.id(), result.turnCount(), result.errorReason(), Instant.now());
-            }
-        }
+        AgentRunResult result = runExecutionService.execute(
+            runId, session, prompt, context, engine, engineType, toolExecutionRepository, agentProperties.getMaxTurns()
+        );
 
         printAgentSummary(runId, effectiveSessionId, workspace, result);
         return result.success() ? 0 : 1;
@@ -297,18 +242,15 @@ public class RunCommand implements Callable<Integer> {
         if (dir == null || dir.isBlank()) {
             return Paths.get("").toAbsolutePath().normalize();
         }
-
         Path path = Paths.get(dir).toAbsolutePath().normalize();
         if (!Files.exists(path)) {
             throw new CommandLine.ParameterException(
-                new CommandLine(this),
-                "Directory does not exist: " + dir
+                new CommandLine(this), "Directory does not exist: " + dir
             );
         }
         if (!Files.isDirectory(path)) {
             throw new CommandLine.ParameterException(
-                new CommandLine(this),
-                "Path is not a directory: " + dir
+                new CommandLine(this), "Path is not a directory: " + dir
             );
         }
         return path;
@@ -328,84 +270,6 @@ public class RunCommand implements Callable<Integer> {
             System.out.println("  error: " + step.error());
             System.out.println("  output: " + step.output());
         }
-    }
-
-    private Integer runRealAgentEngine(String effectiveSessionId, Path workspace) {
-        if (!modelProperties.isEnabled()) {
-            System.err.println("Real LLM engine is not enabled. To use --engine real, set the following:");
-            System.err.println("  tiny-claw.model.enabled=true");
-            System.err.println("  tiny-claw.model.api-key=<your-api-key>");
-            System.err.println("  tiny-claw.model.base-url=<optional-base-url>");
-            return 2;
-        }
-        if (modelProperties.getApiKey() == null || modelProperties.getApiKey().isBlank()) {
-            System.err.println("Real LLM engine requires an API key. Set tiny-claw.model.api-key or LLM_API_KEY environment variable.");
-            return 2;
-        }
-
-        String runId = newRunId();
-
-        Session session;
-        if (runRepository != null) {
-            Optional<Session> existing = runRepository.findSessionById(effectiveSessionId);
-            session = existing.map(stored -> Session.reconstruct(
-                    stored.id(),
-                    workspace.toAbsolutePath().toString(),
-                    stored.status(),
-                    stored.createdAt(),
-                    Instant.now()
-                ))
-                .orElseGet(() -> Session.create(effectiveSessionId, workspace.toAbsolutePath().toString(), Instant.now()));
-            runRepository.saveSession(session);
-        } else {
-            session = Session.create(effectiveSessionId, workspace.toAbsolutePath().toString(), Instant.now());
-        }
-
-        AgentRun run = AgentRun.start(runId, effectiveSessionId, 5, Instant.now());
-        if (runRepository != null) {
-            runRepository.saveRunStarted(run, "agent", prompt);
-        }
-
-        int messagesBeforeCount;
-        if (messageRepository != null) {
-            List<AgentMessageDto> historyDtos = messageRepository.findBySessionId(session.id(), DEFAULT_SESSION_MEMORY_LIMIT);
-            List<Message> history = historyDtos.stream()
-                .map(dto -> dto.toMessage(objectMapper))
-                .toList();
-            sessionService.replaceMessages(session.id(), history);
-            messagesBeforeCount = history.size();
-        } else {
-            messagesBeforeCount = sessionService.getWorkingMemory(session.id()).size();
-        }
-
-        ToolExecutionContext context = new ToolExecutionContext(workspace).withRun(run.id(), session.id());
-        AgentEngine realEngine = agentEngine.withModelName(modelProperties.getName());
-        AgentRunResult result = realEngine.run(run, session, prompt, context, toolExecutionRepository);
-
-        // Persist only the messages that were added during this run
-        if (messageRepository != null) {
-            List<Message> messagesAfter = sessionService.getWorkingMemory(session.id());
-            List<Message> newMessages = messagesAfter.stream()
-                .skip(messagesBeforeCount)
-                .filter(m -> m.role() != Role.SYSTEM)
-                .toList();
-            for (Message m : newMessages) {
-                messageRepository.append(runId, session.id(), m);
-            }
-        }
-
-        if (result.success()) {
-            if (runRepository != null) {
-                runRepository.saveRunCompleted(run.id(), result.turnCount(), Instant.now());
-            }
-        } else {
-            if (runRepository != null) {
-                runRepository.saveRunFailed(run.id(), result.turnCount(), result.errorReason(), Instant.now());
-            }
-        }
-
-        printAgentSummary(runId, effectiveSessionId, workspace, result);
-        return result.success() ? 0 : 1;
     }
 
     private void printAgentSummary(String runId, String sessionId, Path workspace, AgentRunResult result) {

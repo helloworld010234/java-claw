@@ -4,6 +4,8 @@ import com.tinyclaw.application.persistence.UsageRecord;
 import com.tinyclaw.ports.persistence.UsageRepositoryPort;
 import org.springframework.jdbc.core.JdbcTemplate;
 
+import java.util.List;
+
 /**
  * JDBC implementation of {@link UsageRepositoryPort} writing to {@code usage_records}.
  */
@@ -36,5 +38,26 @@ public class JdbcUsageRepository implements UsageRepositoryPort {
             "spring-ai",
             java.sql.Timestamp.from(record.recordedAt())
         );
+    }
+
+    @Override
+    public List<UsageRecord> findByRunId(String runId) {
+        String sql = """
+            SELECT run_id, session_id, model, prompt_tokens, completion_tokens,
+                   estimated_cost_cny, created_at
+            FROM usage_records
+            WHERE run_id = ?
+            ORDER BY created_at
+            """;
+        return jdbcTemplate.query(sql, (rs, rowNum) -> new UsageRecord(
+            rs.getString("run_id"),
+            rs.getString("session_id"),
+            rs.getString("model"),
+            rs.getInt("prompt_tokens"),
+            rs.getInt("completion_tokens"),
+            rs.getObject("estimated_cost_cny") != null ? rs.getDouble("estimated_cost_cny") : null,
+            true,
+            rs.getTimestamp("created_at").toInstant()
+        ), runId);
     }
 }

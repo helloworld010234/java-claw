@@ -24,9 +24,21 @@ tiny-claw:
     max-turns: 20
     max-tool-calls-per-turn: 8
     max-runtime-seconds: 600
+    plan-mode: false        # 是否启用 Plan Mode 规范
+  security:
+    enabled: true           # 是否启用 API Key 认证
+    api-key:
+      user-key: ${TINyclaw_API_KEY:}   # 普通操作 Key
+      admin-key: ${TINyclaw_ADMIN_KEY:} # 审批操作需要 Admin Key
   tool:
     shell-timeout-seconds: 30
     max-output-chars: 8000
+  workspace:
+    root: ${user.dir}
   approval:
     enabled: true
     timeout-seconds: 600
+    required-tools:
+      - write_file
+      - edit_file
+      - shell_command

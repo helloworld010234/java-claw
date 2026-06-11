@@ -3,6 +3,7 @@ package com.tinyclaw.adapters.reporter;
 import com.tinyclaw.application.engine.AgentRunResult;
 import com.tinyclaw.domain.message.ToolCall;
 import com.tinyclaw.domain.message.ToolResult;
+import com.tinyclaw.domain.message.Usage;
 import com.tinyclaw.ports.reporter.Reporter;
 
 /**
@@ -41,5 +42,12 @@ public class ConsoleReporter implements Reporter {
     @Override
     public void onRunFailed(String runId, String reason) {
         System.out.println("[run " + runId + "] Failed: " + reason);
+    }
+
+    @Override
+    public void onUsage(String runId, String sessionId, Usage usage, String model) {
+        System.out.println("[run " + runId + "] Usage: " + usage.promptTokens()
+            + " prompt / " + usage.completionTokens() + " completion tokens"
+            + (model != null && !model.isBlank() ? " (model: " + model + ")" : ""));
     }
 }

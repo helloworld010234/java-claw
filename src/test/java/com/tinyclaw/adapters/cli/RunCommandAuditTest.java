@@ -19,6 +19,7 @@ import com.tinyclaw.application.engine.PromptComposer;
 import com.tinyclaw.application.persistence.AgentMessageDto;
 import com.tinyclaw.application.persistence.AgentRunSummary;
 import com.tinyclaw.application.persistence.ToolExecutionRecord;
+import com.tinyclaw.application.run.AgentRunExecutionService;
 import com.tinyclaw.application.run.ScriptedRunExecutor;
 import com.tinyclaw.application.tool.AllowAllPolicy;
 import com.tinyclaw.application.tool.DangerousCommandPolicy;
@@ -97,14 +98,14 @@ class RunCommandAuditTest {
             dummyLlm, registry, new PromptComposer(), new NoOpReporter(), sessionService
         );
         command = new RunCommand(
+            new AgentRunExecutionService(runRepository, messageRepository, sessionService, new ObjectMapper(), new NoOpReporter()),
             new ScriptedRunExecutor(registry, new ObjectMapper()),
             agentEngine,
             new ObjectMapper(),
-            sessionService,
             runRepository,
-            messageRepository,
             toolExecutionRepository,
-            new com.tinyclaw.config.TinyClawModelProperties()
+            new com.tinyclaw.config.TinyClawModelProperties(),
+            new com.tinyclaw.config.AgentProperties()
         );
         out = new ByteArrayOutputStream();
         err = new ByteArrayOutputStream();
@@ -151,7 +152,7 @@ class RunCommandAuditTest {
 
         AgentRunSummary run = runRepository.findById(runId).orElseThrow();
         assertThat(run.status()).isEqualTo(AgentRunStatus.COMPLETED);
-        assertThat(run.mode()).isEqualTo("agent");
+        assertThat(run.mode()).isEqualTo("fake");
         assertThat(run.prompt()).isEqualTo("hello");
 
         List<AgentMessageDto> messages = messageRepository.findByRunId(runId);
@@ -442,7 +443,7 @@ class RunCommandAuditTest {
     @Test
     void planFileShellCommandPersistsExecution() throws IOException {
         String command = System.getProperty("os.name").toLowerCase().contains("windows")
-            ? "Write-Output 'plan-shell'"
+            ? "echo plan-shell"
             : "echo plan-shell";
         String plan = """
             {
@@ -624,7 +625,7 @@ class RunCommandAuditTest {
     @Test
     void planFileWithApprovalEnabledBlocksShellCommandAndCreatesPendingApproval() throws IOException {
         String command = System.getProperty("os.name").toLowerCase().contains("windows")
-            ? "Write-Output 'plan-shell'"
+            ? "echo plan-shell"
             : "echo plan-shell";
         String plan = """
             {
@@ -656,14 +657,14 @@ class RunCommandAuditTest {
             registry, new PromptComposer(), new NoOpReporter(), sessionService
         );
         RunCommand approvalCommand = new RunCommand(
+            new AgentRunExecutionService(runRepository, messageRepository, sessionService, new ObjectMapper(), new NoOpReporter()),
             new ScriptedRunExecutor(registry, new ObjectMapper()),
             agentEngine,
             new ObjectMapper(),
-            sessionService,
             runRepository,
-            messageRepository,
             toolExecutionRepository,
-            new com.tinyclaw.config.TinyClawModelProperties()
+            new com.tinyclaw.config.TinyClawModelProperties(),
+            new com.tinyclaw.config.AgentProperties()
         );
 
         int exitCode = new CommandLine(approvalCommand).execute(
@@ -716,14 +717,14 @@ class RunCommandAuditTest {
             registry, new PromptComposer(), new NoOpReporter(), sessionService
         );
         RunCommand approvalCommand = new RunCommand(
+            new AgentRunExecutionService(runRepository, messageRepository, sessionService, new ObjectMapper(), new NoOpReporter()),
             new ScriptedRunExecutor(registry, new ObjectMapper()),
             agentEngine,
             new ObjectMapper(),
-            sessionService,
             runRepository,
-            messageRepository,
             toolExecutionRepository,
-            new com.tinyclaw.config.TinyClawModelProperties()
+            new com.tinyclaw.config.TinyClawModelProperties(),
+            new com.tinyclaw.config.AgentProperties()
         );
 
         int exitCode = new CommandLine(approvalCommand).execute(
@@ -833,14 +834,14 @@ class RunCommandAuditTest {
             registry, new PromptComposer(), new NoOpReporter(), sessionService
         );
         RunCommand dangerCommand = new RunCommand(
+            new AgentRunExecutionService(runRepository, messageRepository, sessionService, new ObjectMapper(), new NoOpReporter()),
             new ScriptedRunExecutor(registry, new ObjectMapper()),
             agentEngine,
             new ObjectMapper(),
-            sessionService,
             runRepository,
-            messageRepository,
             toolExecutionRepository,
-            new com.tinyclaw.config.TinyClawModelProperties()
+            new com.tinyclaw.config.TinyClawModelProperties(),
+            new com.tinyclaw.config.AgentProperties()
         );
 
         int exitCode = new CommandLine(dangerCommand).execute(
@@ -893,7 +894,7 @@ class RunCommandAuditTest {
     @Test
     void planFileWithApprovalCanBeResumedAfterApprove() throws IOException {
         String command = System.getProperty("os.name").toLowerCase().contains("windows")
-            ? "Write-Output 'resumed-ok'"
+            ? "echo resumed-ok"
             : "echo resumed-ok";
         String plan = """
             {
@@ -925,14 +926,14 @@ class RunCommandAuditTest {
             registry, new PromptComposer(), new NoOpReporter(), sessionService
         );
         RunCommand runCommand = new RunCommand(
+            new AgentRunExecutionService(runRepository, messageRepository, sessionService, new ObjectMapper(), new NoOpReporter()),
             new ScriptedRunExecutor(registry, new ObjectMapper()),
             agentEngine,
             new ObjectMapper(),
-            sessionService,
             runRepository,
-            messageRepository,
             toolExecutionRepository,
-            new com.tinyclaw.config.TinyClawModelProperties()
+            new com.tinyclaw.config.TinyClawModelProperties(),
+            new com.tinyclaw.config.AgentProperties()
         );
 
         int runExit = new CommandLine(runCommand).execute(
@@ -990,7 +991,7 @@ class RunCommandAuditTest {
     @Test
     void planFileWithApprovalCanBeResumedOnlyOnce() throws Exception {
         String command = System.getProperty("os.name").toLowerCase().contains("windows")
-            ? "Write-Output 'once'"
+            ? "echo once"
             : "echo once";
         String plan = """
             {
@@ -1022,14 +1023,14 @@ class RunCommandAuditTest {
             registry, new PromptComposer(), new NoOpReporter(), sessionService
         );
         RunCommand runCommand = new RunCommand(
+            new AgentRunExecutionService(runRepository, messageRepository, sessionService, new ObjectMapper(), new NoOpReporter()),
             new ScriptedRunExecutor(registry, new ObjectMapper()),
             agentEngine,
             new ObjectMapper(),
-            sessionService,
             runRepository,
-            messageRepository,
             toolExecutionRepository,
-            new com.tinyclaw.config.TinyClawModelProperties()
+            new com.tinyclaw.config.TinyClawModelProperties(),
+            new com.tinyclaw.config.AgentProperties()
         );
 
         int runExit = new CommandLine(runCommand).execute(

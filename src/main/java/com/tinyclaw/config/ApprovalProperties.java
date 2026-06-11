@@ -10,7 +10,16 @@ import java.util.List;
 @ConfigurationProperties(prefix = "tinyclaw.approval")
 public class ApprovalProperties {
 
-    private List<String> requiredTools = List.of();
+    private boolean enabled = true;
+    private List<String> requiredTools = List.of("write_file", "edit_file", "shell_command");
+
+    public boolean isEnabled() {
+        return enabled;
+    }
+
+    public void setEnabled(boolean enabled) {
+        this.enabled = enabled;
+    }
 
     public List<String> getRequiredTools() {
         return requiredTools;

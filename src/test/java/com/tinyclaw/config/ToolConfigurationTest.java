@@ -44,7 +44,7 @@ class ToolConfigurationTest {
     }
 
     @Test
-    void editFileExecutionWorksThroughRegistry(@TempDir Path workspace) throws IOException {
+    void editFileExecutionRequiresApprovalContext(@TempDir Path workspace) throws IOException {
         Files.writeString(workspace.resolve("notes.txt"), "hello world");
 
         ToolCall call = ToolCall.of(
@@ -56,7 +56,26 @@ class ToolConfigurationTest {
 
         ToolResult result = toolRegistry.execute(call, context);
 
-        assertThat(result.error()).isFalse();
-        assertThat(Files.readString(workspace.resolve("notes.txt"))).isEqualTo("hello agent");
+        assertThat(result.error()).isTrue();
+        assertThat(result.output()).contains("Approval gate requires run and session context");
+    }
+
+    @Test
+    void editFileExecutionWorksWithApprovalContext(@TempDir Path workspace) throws IOException {
+        Files.writeString(workspace.resolve("notes.txt"), "hello world");
+
+        ToolCall call = ToolCall.of(
+            "call-1",
+            "edit_file",
+            "{\"path\":\"notes.txt\",\"oldText\":\"world\",\"newText\":\"agent\"}"
+        );
+        ToolExecutionContext context = new ToolExecutionContext(workspace, "run-1", "sess-1");
+
+        ToolResult result = toolRegistry.execute(call, context);
+
+        // With run/session context, approval gate creates a PENDING approval request
+        // and returns failure with approval required message
+        assertThat(result.error()).isTrue();
+        assertThat(result.output()).contains("Approval required");
     }
 }
