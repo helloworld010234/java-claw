@@ -245,6 +245,15 @@ public class AgentEngine implements SubagentRunner {
     }
 
     /**
+     * Returns a new AgentEngine instance with the given tool registry,
+     * reusing all other dependencies.
+     */
+    public AgentEngine withToolRegistry(ToolRegistry toolRegistry) {
+        return new AgentEngine(llmGateway, toolRegistry, promptComposer, reporter, sessionService, clock,
+            agentContextBuilder, recoveryAdvisor, modelName, traceReporter, maxToolCallsPerTurn, enableThinking, toolExecutor);
+    }
+
+    /**
      * Execute a ReAct agent run.
      *
      * @param run         the run state machine (must be in RUNNING status)
