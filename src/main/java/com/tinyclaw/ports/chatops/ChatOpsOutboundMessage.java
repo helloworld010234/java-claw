@@ -41,46 +41,52 @@ public record ChatOpsOutboundMessage(String text, String runId, Instant timestam
     }
 
     public static ChatOpsOutboundMessage runStarted(String runId, String promptPreview) {
-        String text = "▶️ Run started" + (promptPreview != null && !promptPreview.isBlank()
-            ? ". Prompt: " + truncate(promptPreview, 80)
+        String sanitized = ChatOpsSanitizer.sanitize(promptPreview);
+        String text = "▶️ Run started" + (sanitized != null && !sanitized.isBlank()
+            ? ". Prompt: " + truncate(sanitized, 80)
             : "");
         return new ChatOpsOutboundMessage(text, runId, Instant.now(), Type.RUN_STARTED);
     }
 
     public static ChatOpsOutboundMessage toolCall(String runId, String toolName, String argsPreview) {
+        String sanitized = ChatOpsSanitizer.sanitize(argsPreview);
         String text = "🛠️ Tool call: " + toolName
-            + (argsPreview != null && !argsPreview.isBlank()
-                ? " | args: " + truncate(argsPreview, 120)
+            + (sanitized != null && !sanitized.isBlank()
+                ? " | args: " + truncate(sanitized, 120)
                 : "");
         return new ChatOpsOutboundMessage(text, runId, Instant.now(), Type.TOOL_CALL);
     }
 
     public static ChatOpsOutboundMessage approvalPending(String runId, String approvalId, String toolName, String argsPreview) {
+        String sanitized = ChatOpsSanitizer.sanitize(argsPreview);
         String text = "⏸️ Approval required | tool: " + toolName
             + " | approval: " + shortId(approvalId)
-            + (argsPreview != null && !argsPreview.isBlank()
-                ? " | args: " + truncate(argsPreview, 120)
+            + (sanitized != null && !sanitized.isBlank()
+                ? " | args: " + truncate(sanitized, 120)
                 : "");
         return new ChatOpsOutboundMessage(text, runId, Instant.now(), Type.APPROVAL_PENDING);
     }
 
     public static ChatOpsOutboundMessage toolResult(String runId, String toolName, boolean error, String outputPreview) {
+        String sanitized = ChatOpsSanitizer.sanitize(outputPreview);
         String prefix = error ? "❌ Tool failed" : "✅ Tool ok";
         String text = prefix + " | tool: " + toolName
-            + " | output: " + truncate(outputPreview, 200);
+            + " | output: " + truncate(sanitized, 200);
         return new ChatOpsOutboundMessage(text, runId, Instant.now(), Type.TOOL_RESULT);
     }
 
     public static ChatOpsOutboundMessage runCompleted(String runId, int turns, String finalMessagePreview) {
+        String sanitized = ChatOpsSanitizer.sanitize(finalMessagePreview);
         String text = "✅ Run completed in " + turns + " turn(s)"
-            + (finalMessagePreview != null && !finalMessagePreview.isBlank()
-                ? " | last: " + truncate(finalMessagePreview, 120)
+            + (sanitized != null && !sanitized.isBlank()
+                ? " | last: " + truncate(sanitized, 120)
                 : "");
         return new ChatOpsOutboundMessage(text, runId, Instant.now(), Type.RUN_COMPLETED);
     }
 
     public static ChatOpsOutboundMessage runFailed(String runId, String reason) {
-        String text = "❌ Run failed | " + truncate(reason, 200);
+        String sanitized = ChatOpsSanitizer.sanitize(reason);
+        String text = "❌ Run failed | " + truncate(sanitized, 200);
         return new ChatOpsOutboundMessage(text, runId, Instant.now(), Type.RUN_FAILED);
     }
 

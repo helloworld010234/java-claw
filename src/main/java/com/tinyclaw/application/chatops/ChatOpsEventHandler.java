@@ -6,6 +6,7 @@ import com.tinyclaw.domain.session.Session;
 import com.tinyclaw.ports.chatops.ChatOpsEvent;
 import com.tinyclaw.ports.chatops.ChatOpsMessageSender;
 import com.tinyclaw.ports.chatops.ChatOpsOutboundMessage;
+import com.tinyclaw.ports.chatops.ChatOpsSanitizer;
 import com.tinyclaw.ports.session.SessionService;
 import com.tinyclaw.ports.tool.ToolExecutionContext;
 import org.slf4j.Logger;
@@ -13,7 +14,9 @@ import org.slf4j.LoggerFactory;
 
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 
@@ -39,7 +42,7 @@ public class ChatOpsEventHandler {
     private final ExecutorService executor;
     private final Path chatOpsWorkspace;
     private final int maxTurns;
-    private final java.util.LinkedHashMap<String, Boolean> seenEventIds;
+    private final Map<String, Boolean> seenEventIds;
     private final AgentEngine agentEngine;
     private static final int MAX_SEEN_EVENTS = 10_000;
 
@@ -57,12 +60,12 @@ public class ChatOpsEventHandler {
         this.chatOpsWorkspace = chatOpsWorkspace;
         this.maxTurns = maxTurns;
         this.agentEngine = agentEngine;
-        this.seenEventIds = new java.util.LinkedHashMap<>() {
+        this.seenEventIds = Collections.synchronizedMap(new LinkedHashMap<>() {
             @Override
-            protected boolean removeEldestEntry(java.util.Map.Entry<String, Boolean> eldest) {
+            protected boolean removeEldestEntry(Map.Entry<String, Boolean> eldest) {
                 return size() > MAX_SEEN_EVENTS;
             }
-        };
+        });
     }
 
     /**
@@ -117,7 +120,8 @@ public class ChatOpsEventHandler {
                         ChatOpsOutboundMessage.runFailed(runId, result.errorReason() != null ? result.errorReason() : "unknown"));
                 }
             } catch (Exception e) {
-                log.error("[Run {}] ChatOps run failed: {}", runId, e.getMessage(), e);
+                String safeReason = ChatOpsSanitizer.sanitize(e.getMessage());
+                log.error("[Run {}] ChatOps run failed: {}", runId, safeReason, e);
                 messageSender.sendMessage(event.chatId(),
                     ChatOpsOutboundMessage.runFailed(runId, e.getMessage()));
             }

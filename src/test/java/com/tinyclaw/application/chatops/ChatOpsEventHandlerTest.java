@@ -5,30 +5,24 @@ import com.tinyclaw.adapters.llm.fake.FakeLlmGateway;
 import com.tinyclaw.adapters.reporter.NoOpReporter;
 import com.tinyclaw.adapters.session.InMemorySessionService;
 import com.tinyclaw.application.engine.AgentEngine;
-import com.tinyclaw.application.engine.AgentContextBuilder;
 import com.tinyclaw.application.engine.PromptComposer;
-import com.tinyclaw.application.engine.ToolFailureRecoveryAdvisor;
-import com.tinyclaw.application.engine.WorkingMemorySelector;
-import com.tinyclaw.application.engine.ContextCompactor;
 import com.tinyclaw.application.run.AgentRunExecutionService;
 import com.tinyclaw.application.tool.ToolRegistry;
-import com.tinyclaw.domain.message.ToolCall;
 import com.tinyclaw.ports.chatops.ChatOpsEvent;
 import com.tinyclaw.ports.chatops.FakeChatOpsMessageSender;
 import com.tinyclaw.ports.llm.LlmResponse;
 import com.tinyclaw.ports.session.SessionService;
-import com.tinyclaw.ports.tool.ToolExecutionContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.List;
-import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -150,6 +144,41 @@ class ChatOpsEventHandlerTest {
     }
 
     @Test
+    void concurrentDuplicateEventAcceptedOnlyOnce() throws InterruptedException {
+        int threadCount = 10;
+        String eventId = "evt-concurrent-dup";
+        ChatOpsEvent event = new ChatOpsEvent(eventId, "msg-1", "chat-1", "user-1", "hello", Instant.now(), ChatOpsEvent.Type.TEXT_MESSAGE);
+
+        ExecutorService executor = Executors.newFixedThreadPool(threadCount);
+        CountDownLatch startLatch = new CountDownLatch(1);
+        CountDownLatch doneLatch = new CountDownLatch(threadCount);
+        AtomicInteger acceptedCount = new AtomicInteger(0);
+
+        for (int i = 0; i < threadCount; i++) {
+            executor.submit(() -> {
+                try {
+                    startLatch.await();
+                    boolean accepted = handler.handle(event);
+                    if (accepted) {
+                        acceptedCount.incrementAndGet();
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                } finally {
+                    doneLatch.countDown();
+                }
+            });
+        }
+
+        startLatch.countDown();
+        assertThat(doneLatch.await(5, TimeUnit.SECONDS)).isTrue();
+        executor.shutdown();
+
+        assertThat(acceptedCount.get()).isEqualTo(1);
+        assertThat(handler.isDuplicate(eventId)).isTrue();
+    }
+
+    @Test
     void sessionIdIsDerivedFromChatId() {
         assertThat(ChatOpsEventHandler.deriveSessionId("oc_abc123")).isEqualTo("chatops-oc_abc123");
         assertThat(ChatOpsEventHandler.deriveSessionId(null)).isEqualTo("chatops-default");
@@ -268,5 +297,41 @@ class ChatOpsEventHandlerTest {
 
         // The prompt sent to the engine should be trimmed
         assertThat(capturedPrompt.get()).isEqualTo("hello world");
+    }
+
+    @Test
+    void runStartedMasksSecretInPrompt() throws InterruptedException {
+        CountDownLatch latch = new CountDownLatch(1);
+        FakeChatOpsMessageSender countingSender = new FakeChatOpsMessageSender() {
+            @Override
+            public void sendMessage(String chatId, com.tinyclaw.ports.chatops.ChatOpsOutboundMessage message) {
+                super.sendMessage(chatId, message);
+                if (message.type() == com.tinyclaw.ports.chatops.ChatOpsOutboundMessage.Type.RUN_COMPLETED
+                    || message.type() == com.tinyclaw.ports.chatops.ChatOpsOutboundMessage.Type.RUN_FAILED) {
+                    latch.countDown();
+                }
+            }
+        };
+
+        ChatOpsEventHandler testHandler = new ChatOpsEventHandler(
+            executionService, sessionService, countingSender, directExecutor,
+            Path.of("/tmp/chatops").toAbsolutePath(), 10,
+            new AgentEngine(
+                new FakeLlmGateway(List.of(new LlmResponse("Done", List.of(), null))),
+                new ToolRegistry(List.of()),
+                new PromptComposer(),
+                new NoOpReporter(),
+                sessionService
+            )
+        );
+
+        ChatOpsEvent event = new ChatOpsEvent("evt-6", "msg-6", "chat-6", "user-6", "my api_key is sk-live-12345", Instant.now(), ChatOpsEvent.Type.TEXT_MESSAGE);
+        testHandler.handle(event);
+        assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
+
+        assertThat(countingSender.hasMessageContaining("Run started")).isTrue();
+        // The outbound message must not contain the raw secret
+        assertThat(countingSender.getMessages()).allMatch(m -> !m.text().contains("sk-live-12345"));
+        assertThat(countingSender.getMessages()).anyMatch(m -> m.text().contains("***"));
     }
 }

@@ -100,4 +100,58 @@ class ChatOpsReporterTest {
         assertThat(msg.text()).contains("... (truncated)");
         assertThat(msg.text().length()).isLessThan(args.length());
     }
+
+    @Test
+    void toolCallMasksApiKey() {
+        String args = "{\"api_key\":\"sk-abc123secret\",\"command\":\"echo hi\"}";
+        reporter.onToolCall("run-1", ToolCall.of("tc-1", "shell_command", args));
+        var msg = sender.getMessages().get(0);
+        assertThat(msg.text()).doesNotContain("sk-abc123secret");
+        assertThat(msg.text()).contains("***");
+    }
+
+    @Test
+    void toolCallMasksBearerToken() {
+        String args = "{\"header\":\"Authorization: Bearer secret-token-xyz\"}";
+        reporter.onToolCall("run-1", ToolCall.of("tc-1", "shell_command", args));
+        var msg = sender.getMessages().get(0);
+        assertThat(msg.text()).doesNotContain("secret-token-xyz");
+        assertThat(msg.text()).contains("***");
+    }
+
+    @Test
+    void toolResultMasksSecretInOutput() {
+        String output = "Response: {\"access_token\":\"tok-12345\",\"status\":\"ok\"}";
+        reporter.onToolResult("run-1", ToolResult.success("tc-1", output));
+        var msg = sender.getMessages().get(0);
+        assertThat(msg.text()).doesNotContain("tok-12345");
+        assertThat(msg.text()).contains("***");
+    }
+
+    @Test
+    void runCompletedMasksSecretInFinalMessage() {
+        String finalMessage = "Here is your api_key=sk-live-99999 result";
+        reporter.onRunCompleted("run-1", new RunReportResult(true, finalMessage, 2, null));
+        var msg = sender.getMessages().get(0);
+        assertThat(msg.text()).doesNotContain("sk-live-99999");
+        assertThat(msg.text()).contains("***");
+    }
+
+    @Test
+    void runFailedMasksSecretInReason() {
+        String reason = "Failed because password=super-secret-123";
+        reporter.onRunFailed("run-1", reason);
+        var msg = sender.getMessages().get(0);
+        assertThat(msg.text()).doesNotContain("super-secret-123");
+        assertThat(msg.text()).contains("***");
+    }
+
+    @Test
+    void approvalPendingMasksSecretInArgs() {
+        String args = "{\"client_secret\":\"cs-abcdef\",\"path\":\"/tmp\"}";
+        reporter.notifyApprovalPending("run-1", "apr-123", "write_file", args);
+        var msg = sender.getMessages().get(0);
+        assertThat(msg.text()).doesNotContain("cs-abcdef");
+        assertThat(msg.text()).contains("***");
+    }
 }

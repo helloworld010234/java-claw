@@ -2,6 +2,7 @@ package com.tinyclaw.adapters.web.feishu;
 
 import com.tinyclaw.ports.chatops.ChatOpsMessageSender;
 import com.tinyclaw.ports.chatops.ChatOpsOutboundMessage;
+import com.tinyclaw.ports.chatops.ChatOpsSanitizer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -32,7 +33,8 @@ public class FeishuChatOpsMessageSender implements ChatOpsMessageSender {
             log.debug("[FeishuSender] Dropped text message to {} (disabled)", chatId);
             return;
         }
-        log.info("[FeishuSender] Would send to chat {}: {}", chatId, text);
+        String safe = ChatOpsSanitizer.sanitize(text);
+        log.info("[FeishuSender] Would send to chat {}: {}", chatId, safe);
         // TODO: real Feishu API call
     }
 
@@ -42,8 +44,9 @@ public class FeishuChatOpsMessageSender implements ChatOpsMessageSender {
             log.debug("[FeishuSender] Dropped message to {} (disabled)", chatId);
             return;
         }
+        String safe = ChatOpsSanitizer.sanitize(message.text());
         log.info("[FeishuSender] Would send to chat {}: [{}] {}",
-            chatId, message.type(), message.text());
+            chatId, message.type(), safe);
         // TODO: real Feishu API call with message type formatting
     }
 }
