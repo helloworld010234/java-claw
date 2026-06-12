@@ -44,19 +44,28 @@ public class WorkspacePathResolver {
 
     public Path resolveWritable(Path workspaceRoot, String userPath) throws IOException {
         Path candidate = resolve(workspaceRoot, userPath);
-        Path realRoot = workspaceRoot.toAbsolutePath().normalize().toRealPath();
+        Path root = workspaceRoot.toAbsolutePath().normalize();
+        Path realRoot = root.toRealPath();
 
         Path parent = candidate.getParent();
         if (parent == null) {
             throw new TinyClawDomainException("Path has no parent: " + userPath);
         }
-        if (!Files.exists(parent)) {
-            throw new TinyClawDomainException("Parent directory does not exist: " + userPath);
+
+        // Reject a candidate that is outside the logical workspace root.
+        if (!candidate.startsWith(root)) {
+            throw new TinyClawDomainException("Path escapes workspace: " + userPath);
+        }
+        // Reject a parent path that is outside the logical workspace root.
+        if (!parent.startsWith(root)) {
+            throw new TinyClawDomainException("Path parent escapes workspace: " + userPath);
         }
 
-        Path realParent = parent.toRealPath();
-        if (!realParent.startsWith(realRoot)) {
-            throw new TinyClawDomainException("Path parent escapes workspace through a link: " + userPath);
+        if (Files.exists(parent)) {
+            Path realParent = parent.toRealPath();
+            if (!realParent.startsWith(realRoot)) {
+                throw new TinyClawDomainException("Path parent escapes workspace through a link: " + userPath);
+            }
         }
 
         if (Files.exists(candidate)) {

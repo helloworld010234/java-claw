@@ -86,8 +86,15 @@ public class WriteFileTool implements AgentTool {
         }
 
         Path parent = target.getParent();
-        if (parent == null || !Files.isDirectory(parent)) {
+        if (parent == null) {
             return ToolResult.failure(call.id(), "Parent path is not a directory: " + arguments.path);
+        }
+        if (!Files.isDirectory(parent)) {
+            try {
+                Files.createDirectories(parent);
+            } catch (IOException e) {
+                return ToolResult.failure(call.id(), "Failed to create parent directories: " + arguments.path);
+            }
         }
         if (Files.isDirectory(target)) {
             return ToolResult.failure(call.id(), "Path is a directory: " + arguments.path);

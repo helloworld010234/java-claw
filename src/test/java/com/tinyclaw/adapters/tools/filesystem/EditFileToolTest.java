@@ -55,6 +55,74 @@ class EditFileToolTest {
     }
 
     @Test
+    void replacesAfterCrlfNormalization() throws IOException {
+        Files.writeString(workspace.resolve("notes.txt"), "line1\r\nline2\r\nline3");
+
+        ToolResult result = tool.execute(
+            call("{\"path\":\"notes.txt\",\"oldText\":\"line1\\nline2\",\"newText\":\"first\\nsecond\"}"), context);
+
+        assertThat(result.error()).isFalse();
+        assertThat(Files.readString(workspace.resolve("notes.txt"))).isEqualTo("first\nsecond\nline3");
+    }
+
+    @Test
+    void replacesAfterTrimSpaceNormalization() throws IOException {
+        Files.writeString(workspace.resolve("notes.txt"), "  hello world  ");
+
+        ToolResult result = tool.execute(
+            call("{\"path\":\"notes.txt\",\"oldText\":\"  hello world\",\"newText\":\"hi\"}"), context);
+
+        assertThat(result.error()).isFalse();
+        assertThat(Files.readString(workspace.resolve("notes.txt"))).isEqualTo("hi  ");
+    }
+
+    @Test
+    void replacesAfterLineByLineTrimNormalization() throws IOException {
+        Files.writeString(workspace.resolve("notes.txt"), "class A {\n    void run() {\n        doWork();\n    }\n}");
+
+        ToolResult result = tool.execute(
+            call("{\"path\":\"notes.txt\",\"oldText\":\"  void run() {\\n    doWork();\\n  }\",\"newText\":\"    void execute() {\\n        doWork();\\n    }\"}"), context);
+
+        assertThat(result.error()).isFalse();
+        assertThat(Files.readString(workspace.resolve("notes.txt"))).isEqualTo("class A {\n    void execute() {\n        doWork();\n    }\n}");
+    }
+
+    @Test
+    void supportsOldTextNewTextAliases() throws IOException {
+        Files.writeString(workspace.resolve("notes.txt"), "hello world");
+
+        ToolResult result = tool.execute(
+            call("{\"path\":\"notes.txt\",\"old_text\":\"world\",\"new_text\":\"agent\"}"), context);
+
+        assertThat(result.error()).isFalse();
+        assertThat(Files.readString(workspace.resolve("notes.txt"))).isEqualTo("hello agent");
+    }
+
+    @Test
+    void oldTextNotFoundReturnsFailureAndLeavesFileUnchanged() throws IOException {
+        Files.writeString(workspace.resolve("notes.txt"), "hello world");
+
+        ToolResult result = tool.execute(
+            call("{\"path\":\"notes.txt\",\"oldText\":\"missing\",\"newText\":\"replacement\"}"), context);
+
+        assertThat(result.error()).isTrue();
+        assertThat(result.output()).contains("not found").contains("read");
+        assertThat(Files.readString(workspace.resolve("notes.txt"))).isEqualTo("hello world");
+    }
+
+    @Test
+    void oldTextAppearsMultipleTimesReturnsFailureAndLeavesFileUnchanged() throws IOException {
+        Files.writeString(workspace.resolve("notes.txt"), "hello hello hello");
+
+        ToolResult result = tool.execute(
+            call("{\"path\":\"notes.txt\",\"oldText\":\"hello\",\"newText\":\"hi\"}"), context);
+
+        assertThat(result.error()).isTrue();
+        assertThat(result.output()).contains("multiple times").contains("context");
+        assertThat(Files.readString(workspace.resolve("notes.txt"))).isEqualTo("hello hello hello");
+    }
+
+    @Test
     void missingPathReturnsFailure() {
         ToolResult result = tool.execute(
             call("{\"oldText\":\"a\",\"newText\":\"b\"}"), context);
@@ -163,30 +231,6 @@ class EditFileToolTest {
 
         assertThat(result.error()).isTrue();
         assertThat(result.output()).contains("escapes workspace");
-    }
-
-    @Test
-    void oldTextNotFoundReturnsFailureAndLeavesFileUnchanged() throws IOException {
-        Files.writeString(workspace.resolve("notes.txt"), "hello world");
-
-        ToolResult result = tool.execute(
-            call("{\"path\":\"notes.txt\",\"oldText\":\"missing\",\"newText\":\"replacement\"}"), context);
-
-        assertThat(result.error()).isTrue();
-        assertThat(result.output()).contains("not found");
-        assertThat(Files.readString(workspace.resolve("notes.txt"))).isEqualTo("hello world");
-    }
-
-    @Test
-    void oldTextAppearsMultipleTimesReturnsFailureAndLeavesFileUnchanged() throws IOException {
-        Files.writeString(workspace.resolve("notes.txt"), "hello hello hello");
-
-        ToolResult result = tool.execute(
-            call("{\"path\":\"notes.txt\",\"oldText\":\"hello\",\"newText\":\"hi\"}"), context);
-
-        assertThat(result.error()).isTrue();
-        assertThat(result.output()).contains("multiple times");
-        assertThat(Files.readString(workspace.resolve("notes.txt"))).isEqualTo("hello hello hello");
     }
 
     @Test

@@ -23,6 +23,9 @@ class ToolConfigurationTest {
     @Autowired
     private ToolRegistry toolRegistry;
 
+    @Autowired
+    private ToolRegistry readOnlyToolRegistry;
+
     @Test
     void readFileToolIsRegistered() {
         assertThat(toolRegistry.find("read_file")).isPresent();
@@ -41,6 +44,30 @@ class ToolConfigurationTest {
     @Test
     void shellCommandToolIsRegistered() {
         assertThat(toolRegistry.find("shell_command")).isPresent();
+    }
+
+    @Test
+    void globFilesToolIsRegistered() {
+        assertThat(toolRegistry.find("glob_files")).isPresent();
+    }
+
+    @Test
+    void searchTextToolIsRegistered() {
+        assertThat(toolRegistry.find("search_text")).isPresent();
+    }
+
+    @Test
+    void readOnlyRegistryContainsReadTools() {
+        assertThat(readOnlyToolRegistry.find("read_file")).isPresent();
+        assertThat(readOnlyToolRegistry.find("glob_files")).isPresent();
+        assertThat(readOnlyToolRegistry.find("search_text")).isPresent();
+    }
+
+    @Test
+    void readOnlyRegistryExcludesWriteEditAndShellTools() {
+        assertThat(readOnlyToolRegistry.find("write_file")).isEmpty();
+        assertThat(readOnlyToolRegistry.find("edit_file")).isEmpty();
+        assertThat(readOnlyToolRegistry.find("shell_command")).isEmpty();
     }
 
     @Test

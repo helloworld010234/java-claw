@@ -4,7 +4,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tinyclaw.adapters.llm.fake.FakeLlmGateway;
 import com.tinyclaw.adapters.reporter.NoOpReporter;
 import com.tinyclaw.adapters.session.InMemorySessionService;
+import com.tinyclaw.adapters.tools.filesystem.GlobFilesTool;
 import com.tinyclaw.adapters.tools.filesystem.ReadFileTool;
+import com.tinyclaw.adapters.tools.filesystem.SearchTextTool;
 import com.tinyclaw.adapters.tools.filesystem.WriteFileTool;
 import com.tinyclaw.adapters.tools.filesystem.WorkspacePathResolver;
 import com.tinyclaw.application.approval.ApprovalGatePolicy;
@@ -67,7 +69,9 @@ class AgentEngineTest {
         ObjectMapper objectMapper = new ObjectMapper();
         toolRegistry = new ToolRegistry(List.of(
             new WriteFileTool(pathResolver, objectMapper),
-            new ReadFileTool(pathResolver, objectMapper)
+            new ReadFileTool(pathResolver, objectMapper),
+            new GlobFilesTool(pathResolver, objectMapper),
+            new SearchTextTool(pathResolver, objectMapper)
         ));
         sessionService = new InMemorySessionService();
         reporter = new NoOpReporter();
@@ -144,6 +148,33 @@ class AgentEngineTest {
         assertThat(result.finalMessage()).isEqualTo("finished");
         assertThat(result.turnCount()).isEqualTo(3);
         assertThat(Files.readString(workspace.resolve("dst.txt"))).isEqualTo("read: hello");
+    }
+
+    @Test
+    void searchToolObservationFlowsBackToLlm() throws Exception {
+        Files.writeString(workspace.resolve("data.txt"), "the answer is 42");
+
+        FakeLlmGateway fakeLlm = new FakeLlmGateway(List.of(
+            new LlmResponse("", List.of(
+                ToolCall.of("t1", "search_text", "{\"query\":\"answer\"}")
+            ), null),
+            new LlmResponse("The answer is 42", List.of(), null)
+        ));
+        AgentEngine engine = new AgentEngine(fakeLlm, toolRegistry, promptComposer, reporter, sessionService, clock);
+
+        AgentRunResult result = engine.run(
+            startRun(3),
+            createSession(),
+            "Find the answer",
+            new ToolExecutionContext(workspace)
+        );
+
+        assertThat(result.success()).isTrue();
+        assertThat(result.finalMessage()).isEqualTo("The answer is 42");
+        assertThat(result.turnCount()).isEqualTo(2);
+
+        List<Message> memory = sessionService.getWorkingMemory("session-1");
+        assertThat(memory).anyMatch(m -> m.content().contains("data.txt:1: the answer is 42"));
     }
 
     @Test

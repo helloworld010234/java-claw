@@ -15,15 +15,32 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 
 /**
- * Edits a UTF-8 text file in the workspace by exact string replacement.
+ * Edits a UTF-8 text file in the workspace by fuzzy string replacement.
+ *
+ * <p>The tool tries increasingly tolerant matching strategies while still
+ * requiring a unique match, matching the behavior of the Go reference
+ * implementation:</p>
+ *
+ * <ol>
+ *   <li>Exact match</li>
+ *   <li>CRLF/LF normalization</li>
+ *   <li>Trim-space match</li>
+ *   <li>Line-by-line trim match</li>
+ * </ol>
+ *
+ * <p>If the old text matches zero or multiple locations, the edit fails with a
+ * clear message so the agent can read the file again or provide more context.</p>
  */
 @Component
 public class EditFileTool implements AgentTool {
 
     public static final String NAME = "edit_file";
-    private static final String DESCRIPTION = "Edit a text file in the workspace by exact string replacement.";
+    private static final String DESCRIPTION = "Edit a text file in the workspace by replacing a unique text snippet.";
     private static final String INPUT_SCHEMA_JSON = """
         {
           "type": "object",
@@ -34,11 +51,19 @@ public class EditFileTool implements AgentTool {
             },
             "oldText": {
               "type": "string",
-              "description": "Exact text to replace"
+              "description": "Text to replace. Must be unique in the file; provide enough context."
             },
             "newText": {
               "type": "string",
               "description": "Replacement text"
+            },
+            "old_text": {
+              "type": "string",
+              "description": "Alias for oldText"
+            },
+            "new_text": {
+              "type": "string",
+              "description": "Alias for newText"
             }
           },
           "required": ["path", "oldText", "newText"]
@@ -94,27 +119,115 @@ public class EditFileTool implements AgentTool {
             return ToolResult.failure(call.id(), "Failed to read file: " + e.getMessage());
         }
 
-        int firstIndex = content.indexOf(arguments.oldText);
-        if (firstIndex == -1) {
-            return ToolResult.failure(call.id(), "oldText not found in file: " + arguments.path);
+        ReplacementResult replacement = fuzzyReplace(content, arguments.oldText, arguments.newText);
+        if (!replacement.success()) {
+            return ToolResult.failure(call.id(), replacement.message());
         }
-
-        int secondIndex = content.indexOf(arguments.oldText, firstIndex + arguments.oldText.length());
-        if (secondIndex != -1) {
-            return ToolResult.failure(call.id(), "oldText appears multiple times in file: " + arguments.path);
-        }
-
-        String newContent = content.substring(0, firstIndex)
-            + arguments.newText
-            + content.substring(firstIndex + arguments.oldText.length());
 
         try {
-            Files.writeString(target, newContent, StandardCharsets.UTF_8);
+            Files.writeString(target, replacement.newContent(), StandardCharsets.UTF_8);
         } catch (IOException e) {
             return ToolResult.failure(call.id(), "Failed to write file: " + e.getMessage());
         }
 
         return ToolResult.success(call.id(), "Edited file: " + arguments.path);
+    }
+
+    private ReplacementResult fuzzyReplace(String content, String oldText, String newText) {
+        // L1: exact match
+        int count = countOccurrences(content, oldText);
+        if (count == 1) {
+            return ReplacementResult.success(content.replace(oldText, newText));
+        }
+        if (count > 1) {
+            return ReplacementResult.failure("oldText appears multiple times in file. Provide more context to make the match unique.");
+        }
+
+        // L2: CRLF/LF normalization
+        String normalizedContent = content.replace("\r\n", "\n");
+        String normalizedOld = oldText.replace("\r\n", "\n");
+
+        count = countOccurrences(normalizedContent, normalizedOld);
+        if (count == 1) {
+            return ReplacementResult.success(normalizedContent.replace(normalizedOld, newText));
+        }
+        if (count > 1) {
+            return ReplacementResult.failure("oldText appears multiple times in file after newline normalization. Provide more context to make the match unique.");
+        }
+
+        // L3: trim-space match
+        String trimmedOld = normalizedOld.trim();
+        if (!trimmedOld.isEmpty()) {
+            count = countOccurrences(normalizedContent, trimmedOld);
+            if (count == 1) {
+                return ReplacementResult.success(normalizedContent.replace(trimmedOld, newText));
+            }
+            if (count > 1) {
+                return ReplacementResult.failure("oldText appears multiple times in file after trim-space normalization. Provide more context to make the match unique.");
+            }
+        }
+
+        // L4: line-by-line trim match
+        return lineByLineReplace(normalizedContent, normalizedOld, newText);
+    }
+
+    private ReplacementResult lineByLineReplace(String content, String oldText, String newText) {
+        String[] contentLines = content.split("\n", -1);
+        String[] oldLines = oldText.trim().split("\n", -1);
+
+        if (oldLines.length == 0 || contentLines.length < oldLines.length) {
+            return ReplacementResult.failure("oldText not found in file. Try reading the file again to confirm the exact text.");
+        }
+
+        for (int i = 0; i < oldLines.length; i++) {
+            oldLines[i] = oldLines[i].trim();
+        }
+
+        int matchCount = 0;
+        int matchStartIndex = -1;
+        int matchEndIndex = -1;
+
+        for (int i = 0; i <= contentLines.length - oldLines.length; i++) {
+            boolean isMatch = true;
+            for (int j = 0; j < oldLines.length; j++) {
+                if (!contentLines[i + j].trim().equals(oldLines[j])) {
+                    isMatch = false;
+                    break;
+                }
+            }
+            if (isMatch) {
+                matchCount++;
+                matchStartIndex = i;
+                matchEndIndex = i + oldLines.length;
+            }
+        }
+
+        if (matchCount == 0) {
+            return ReplacementResult.failure("oldText not found in file. Try reading the file again to confirm the exact text.");
+        }
+        if (matchCount > 1) {
+            return ReplacementResult.failure("oldText matches " + matchCount + " locations in file after line-by-line normalization. Provide more context to make the match unique.");
+        }
+
+        List<String> newContentLines = new ArrayList<>();
+        newContentLines.addAll(Arrays.asList(contentLines).subList(0, matchStartIndex));
+        newContentLines.add(newText);
+        newContentLines.addAll(Arrays.asList(contentLines).subList(matchEndIndex, contentLines.length));
+
+        return ReplacementResult.success(String.join("\n", newContentLines));
+    }
+
+    private int countOccurrences(String content, String pattern) {
+        if (pattern.isEmpty()) {
+            return 0;
+        }
+        int count = 0;
+        int fromIndex = 0;
+        while ((fromIndex = content.indexOf(pattern, fromIndex)) != -1) {
+            count++;
+            fromIndex += pattern.length();
+        }
+        return count;
     }
 
     private EditArguments parseArguments(ToolCall call) {
@@ -126,25 +239,35 @@ public class EditFileTool implements AgentTool {
                 return EditArguments.error("Missing or invalid 'path' argument");
             }
 
-            JsonNode oldTextNode = root.get("oldText");
-            if (oldTextNode == null || !oldTextNode.isTextual()) {
+            String oldText = readTextField(root, "oldText", "old_text");
+            if (oldText == null) {
                 return EditArguments.error("Missing or invalid 'oldText' argument");
             }
-
-            JsonNode newTextNode = root.get("newText");
-            if (newTextNode == null || !newTextNode.isTextual()) {
-                return EditArguments.error("Missing or invalid 'newText' argument");
-            }
-
-            String oldText = oldTextNode.asText();
             if (oldText.isEmpty()) {
                 return EditArguments.error("oldText must not be empty");
             }
 
-            return new EditArguments(pathNode.asText(), oldText, newTextNode.asText(), null);
+            String newText = readTextField(root, "newText", "new_text");
+            if (newText == null) {
+                return EditArguments.error("Missing or invalid 'newText' argument");
+            }
+
+            return new EditArguments(pathNode.asText(), oldText, newText, null);
         } catch (IOException e) {
             return EditArguments.error("Invalid arguments JSON: " + e.getMessage());
         }
+    }
+
+    private String readTextField(JsonNode root, String primary, String alias) {
+        JsonNode primaryNode = root.get(primary);
+        if (primaryNode != null && primaryNode.isTextual()) {
+            return primaryNode.asText();
+        }
+        JsonNode aliasNode = root.get(alias);
+        if (aliasNode != null && aliasNode.isTextual()) {
+            return aliasNode.asText();
+        }
+        return null;
     }
 
     private record EditArguments(String path, String oldText, String newText, String error) {
@@ -152,4 +275,19 @@ public class EditFileTool implements AgentTool {
             return new EditArguments(null, null, null, message);
         }
     }
+
+    private record ReplacementResult(String newContent, String message) {
+        static ReplacementResult success(String newContent) {
+            return new ReplacementResult(newContent, null);
+        }
+
+        static ReplacementResult failure(String message) {
+            return new ReplacementResult(null, message);
+        }
+
+        boolean success() {
+            return newContent != null;
+        }
+    }
+
 }

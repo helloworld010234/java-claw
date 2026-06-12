@@ -96,6 +96,29 @@ class ReadFileToolTest {
     }
 
     @Test
+    void truncatesLongContent() throws IOException {
+        String longContent = "x".repeat(ReadFileTool.MAX_OUTPUT_CHARS + 1000);
+        Files.writeString(workspace.resolve("long.txt"), longContent);
+
+        ToolResult result = tool.execute(call("{\"path\":\"long.txt\"}"), context);
+
+        assertThat(result.error()).isFalse();
+        assertThat(result.output()).hasSize(ReadFileTool.MAX_OUTPUT_CHARS + ReadFileTool.TRUNCATED_SUFFIX.length());
+        assertThat(result.output()).endsWith(ReadFileTool.TRUNCATED_SUFFIX);
+    }
+
+    @Test
+    void binaryFileReturnsFailure() throws IOException {
+        Path binary = workspace.resolve("binary.bin");
+        Files.write(binary, new byte[]{'h', 'e', 'l', 'l', 'o', 0, 'w', 'o', 'r', 'l', 'd'});
+
+        ToolResult result = tool.execute(call("{\"path\":\"binary.bin\"}"), context);
+
+        assertThat(result.error()).isTrue();
+        assertThat(result.output()).contains("binary");
+    }
+
+    @Test
     void constructorRejectsNullDependencies() {
         ObjectMapper objectMapper = new ObjectMapper();
         WorkspacePathResolver resolver = new WorkspacePathResolver();

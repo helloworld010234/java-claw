@@ -1,7 +1,9 @@
 package com.tinyclaw.config;
 
 import com.tinyclaw.adapters.observability.AgentMetrics;
+import com.tinyclaw.adapters.tools.filesystem.GlobFilesTool;
 import com.tinyclaw.adapters.tools.filesystem.ReadFileTool;
+import com.tinyclaw.adapters.tools.filesystem.SearchTextTool;
 import com.tinyclaw.application.approval.ApprovalGatePolicy;
 import com.tinyclaw.application.tool.AllowAllPolicy;
 import com.tinyclaw.application.tool.DangerousCommandPolicy;
@@ -39,9 +41,14 @@ public class ToolConfiguration {
      * <p>TODO: 后续应添加 GrepTool 和 GlobTool 以增强子 Agent 的搜索能力。</p>
      */
     @Bean
-    ToolRegistry readOnlyToolRegistry(ReadFileTool readFileTool, AgentMetricsPort agentMetrics) {
+    ToolRegistry readOnlyToolRegistry(ReadFileTool readFileTool,
+                                      GlobFilesTool globFilesTool,
+                                      SearchTextTool searchTextTool,
+                                      AgentMetricsPort agentMetrics) {
         List<AgentTool> readOnlyTools = new ArrayList<>();
         readOnlyTools.add(readFileTool);
+        readOnlyTools.add(globFilesTool);
+        readOnlyTools.add(searchTextTool);
         // 子 Agent 不需要审批策略，使用 AllowAllPolicy
         List<ToolExecutionPolicy> readOnlyPolicies = new ArrayList<>();
         readOnlyPolicies.add(new AllowAllPolicy());

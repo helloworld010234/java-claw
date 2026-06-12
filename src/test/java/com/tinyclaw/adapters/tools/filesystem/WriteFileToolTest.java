@@ -84,11 +84,19 @@ class WriteFileToolTest {
     }
 
     @Test
-    void parentDirectoryMissingReturnsFailure() {
+    void parentDirectoryMissingCreatesDirectories() throws IOException {
         ToolResult result = tool.execute(call("{\"path\":\"missing/notes.txt\",\"content\":\"hello\"}"), context);
 
+        assertThat(result.error()).isFalse();
+        assertThat(Files.readString(workspace.resolve("missing/notes.txt"))).isEqualTo("hello");
+    }
+
+    @Test
+    void parentCreationStaysInsideWorkspace() {
+        ToolResult result = tool.execute(call("{\"path\":\"../outside/notes.txt\",\"content\":\"hello\"}"), context);
+
         assertThat(result.error()).isTrue();
-        assertThat(result.output()).contains("Parent directory");
+        assertThat(result.output()).contains("escapes workspace");
     }
 
     @Test
