@@ -165,6 +165,20 @@ class GlobFilesToolTest {
     }
 
     @Test
+    void symlinkDirectoryEscapeIsIgnored() throws IOException {
+        Path outsideDir = Files.createTempDirectory(workspace.getParent(), "outside-glob-dir");
+        Files.writeString(outsideDir.resolve("secret.txt"), "secret");
+        Path linkDir = workspace.resolve("link-dir");
+        assumeTrue(tryCreateSymbolicLink(linkDir, outsideDir), "Cannot create symbolic link on this system");
+
+        ToolResult result = tool.execute(call("{}"), context);
+
+        assertThat(result.error()).isFalse();
+        assertThat(result.output()).doesNotContain("secret.txt");
+        assertThat(result.output()).contains("No matching files");
+    }
+
+    @Test
     void constructorRejectsNullDependencies() {
         ObjectMapper objectMapper = new ObjectMapper();
         WorkspacePathResolver resolver = new WorkspacePathResolver();

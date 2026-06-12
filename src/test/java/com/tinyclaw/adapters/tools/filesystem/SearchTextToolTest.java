@@ -65,6 +65,19 @@ class SearchTextToolTest {
     }
 
     @Test
+    void simpleGlobMatchesNestedFiles() throws IOException {
+        Files.createDirectory(workspace.resolve("src"));
+        Files.writeString(workspace.resolve("src/Nested.java"), "class Nested {}");
+        Files.writeString(workspace.resolve("root.md"), "class Root");
+
+        ToolResult result = tool.execute(call("{\"query\":\"class\",\"glob\":\"*.java\"}"), context);
+
+        assertThat(result.error()).isFalse();
+        assertThat(result.output()).contains("src/Nested.java:1: class Nested {}");
+        assertThat(result.output()).doesNotContain("root.md");
+    }
+
+    @Test
     void restrictsToBaseDirectory() throws IOException {
         Files.createDirectory(workspace.resolve("docs"));
         Files.writeString(workspace.resolve("docs/readme.md"), "readme content");
@@ -186,6 +199,36 @@ class SearchTextToolTest {
         assertThat(result.error()).isFalse();
         assertThat(result.output()).doesNotContain("outside-search");
         assertThat(result.output()).isEqualTo("No matches found.");
+    }
+
+    @Test
+    void symlinkDirectoryEscapeIsIgnored() throws IOException {
+        Path outsideDir = Files.createTempDirectory(workspace.getParent(), "outside-search-dir");
+        Files.writeString(outsideDir.resolve("secret.txt"), "secret hello");
+        Path linkDir = workspace.resolve("link-search-dir");
+        assumeTrue(tryCreateSymbolicLink(linkDir, outsideDir), "Cannot create symbolic link on this system");
+
+        ToolResult result = tool.execute(call("{\"query\":\"hello\"}"), context);
+
+        assertThat(result.error()).isFalse();
+        assertThat(result.output()).doesNotContain("secret.txt");
+        assertThat(result.output()).isEqualTo("No matches found.");
+    }
+
+    @Test
+    void binaryDetectionSamplesOnly() throws IOException {
+        Path binary = workspace.resolve("large-binary.bin");
+        byte[] content = new byte[2 * 1024 * 1024];
+        content[content.length - 1] = 0;
+        Files.write(binary, content);
+
+        Files.writeString(workspace.resolve("text.txt"), "hello");
+
+        ToolResult result = tool.execute(call("{\"query\":\"hello\"}"), context);
+
+        assertThat(result.error()).isFalse();
+        assertThat(result.output()).contains("text.txt");
+        assertThat(result.output()).doesNotContain("large-binary.bin");
     }
 
     @Test

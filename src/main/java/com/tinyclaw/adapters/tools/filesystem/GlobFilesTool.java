@@ -12,22 +12,24 @@ import com.tinyclaw.ports.tool.ToolExecutionContext;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
-import java.nio.file.FileVisitOption;
+import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.PathMatcher;
+import java.nio.file.SimpleFileVisitor;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.stream.Stream;
 
 /**
  * Lists files inside the workspace matching an optional glob pattern.
  *
  * <p>The tool resolves the requested base directory against the workspace root,
- * then walks the directory tree and returns matching file paths relative to the
- * workspace. Symbolic links that escape the workspace are rejected, and the
- * output is bounded to avoid flooding the agent context.</p>
+ * then walks the directory tree without following symbolic links and returns
+ * matching file paths relative to the workspace. Symbolic links are skipped,
+ * and traversal stops as soon as either the result count or output character
+ * limit is reached.</p>
  */
 @Component
 public class GlobFilesTool implements AgentTool {
@@ -100,31 +102,16 @@ public class GlobFilesTool implements AgentTool {
         GlobMatcher matcher = createMatcher(baseDir, arguments.glob);
         Path workspaceRoot = context.workspaceRoot().toAbsolutePath().normalize();
 
-        List<String> matches = new ArrayList<>();
-        boolean resultLimitReached = false;
-        try (Stream<Path> walk = Files.walk(baseDir, Integer.MAX_VALUE, FileVisitOption.FOLLOW_LINKS)) {
-            for (Path path : walk.toList()) {
-                if (matches.size() >= MAX_RESULTS) {
-                    resultLimitReached = true;
-                    break;
-                }
-                if (!Files.isRegularFile(path)) {
-                    continue;
-                }
-                if (!matcher.matches(baseDir.relativize(path))) {
-                    continue;
-                }
-                if (!isInsideWorkspace(path, workspaceRoot)) {
-                    continue;
-                }
-                matches.add(workspaceRoot.relativize(path.toAbsolutePath().normalize()).toString().replace("\\", "/"));
-            }
+        MatchCollector collector = new MatchCollector(baseDir, workspaceRoot, matcher);
+        try {
+            Files.walkFileTree(baseDir, collector);
         } catch (IOException e) {
             return ToolResult.failure(call.id(), "Failed to list files: " + e.getMessage());
         }
 
+        List<String> matches = collector.matches;
         Collections.sort(matches);
-        String output = formatOutput(matches, resultLimitReached);
+        String output = formatOutput(matches, collector.resultLimitReached, collector.outputLimitReached);
         return ToolResult.success(call.id(), output);
     }
 
@@ -137,7 +124,7 @@ public class GlobFilesTool implements AgentTool {
     }
 
     private GlobMatcher createMatcher(Path baseDir, String glob) {
-        if (glob.contains("/") || glob.contains("\\\\") || glob.contains("**")) {
+        if (glob.contains("/") || glob.contains("\\") || glob.contains("**")) {
             PathMatcher pathMatcher = baseDir.getFileSystem().getPathMatcher("glob:" + glob);
             return relativePath -> pathMatcher.matches(relativePath);
         }
@@ -151,17 +138,7 @@ public class GlobFilesTool implements AgentTool {
         boolean matches(Path relativePath);
     }
 
-    private boolean isInsideWorkspace(Path path, Path workspaceRoot) {
-        try {
-            Path realPath = path.toRealPath();
-            Path realRoot = workspaceRoot.toRealPath();
-            return realPath.startsWith(realRoot);
-        } catch (IOException e) {
-            return false;
-        }
-    }
-
-    private String formatOutput(List<String> matches, boolean resultLimitReached) {
+    private String formatOutput(List<String> matches, boolean resultLimitReached, boolean outputLimitReached) {
         if (matches.isEmpty()) {
             return "No matching files found.";
         }
@@ -169,6 +146,9 @@ public class GlobFilesTool implements AgentTool {
         StringBuilder output = new StringBuilder(joined);
         if (resultLimitReached) {
             output.append(RESULT_LIMIT_SUFFIX);
+        }
+        if (outputLimitReached) {
+            output.append(TRUNCATED_SUFFIX);
         }
         if (output.length() > MAX_OUTPUT_CHARS) {
             output.setLength(MAX_OUTPUT_CHARS);
@@ -211,6 +191,59 @@ public class GlobFilesTool implements AgentTool {
     private record GlobArguments(String path, String glob, String error) {
         private static GlobArguments error(String message) {
             return new GlobArguments(null, null, message);
+        }
+    }
+
+    /**
+     * Streaming file-tree visitor that collects matches while respecting result
+     * and output character limits. Symbolic links are never followed.
+     */
+    private static final class MatchCollector extends SimpleFileVisitor<Path> {
+
+        private final Path baseDir;
+        private final Path workspaceRoot;
+        private final GlobMatcher matcher;
+        private final List<String> matches = new ArrayList<>();
+
+        private boolean resultLimitReached;
+        private boolean outputLimitReached;
+        private int outputLength;
+
+        MatchCollector(Path baseDir, Path workspaceRoot, GlobMatcher matcher) {
+            this.baseDir = baseDir;
+            this.workspaceRoot = workspaceRoot;
+            this.matcher = matcher;
+        }
+
+        @Override
+        public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
+            // Skip symbolic links and non-regular files. Because the walk does not
+            // follow links, a symlink to a directory is also seen as a file here.
+            if (Files.isSymbolicLink(file) || !Files.isRegularFile(file)) {
+                return FileVisitResult.CONTINUE;
+            }
+
+            Path relativeToBase = baseDir.relativize(file);
+            if (!matcher.matches(relativeToBase)) {
+                return FileVisitResult.CONTINUE;
+            }
+
+            Path relativeToWorkspace = workspaceRoot.relativize(file.toAbsolutePath().normalize());
+            String entry = relativeToWorkspace.toString().replace("\\", "/");
+
+            int extra = matches.isEmpty() ? entry.length() : 1 + entry.length();
+            if (outputLength + extra > MAX_OUTPUT_CHARS) {
+                outputLimitReached = true;
+                return FileVisitResult.TERMINATE;
+            }
+            outputLength += extra;
+            matches.add(entry);
+
+            if (matches.size() >= MAX_RESULTS) {
+                resultLimitReached = true;
+                return FileVisitResult.TERMINATE;
+            }
+            return FileVisitResult.CONTINUE;
         }
     }
 }

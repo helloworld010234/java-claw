@@ -119,6 +119,30 @@ class ReadFileToolTest {
     }
 
     @Test
+    void binaryDetectionSamplesOnly() throws IOException {
+        Path binary = workspace.resolve("large-binary.bin");
+        byte[] content = new byte[2 * 1024 * 1024];
+        content[content.length - 1] = 0;
+        Files.write(binary, content);
+
+        ToolResult result = tool.execute(call("{\"path\":\"large-binary.bin\"}"), context);
+
+        assertThat(result.error()).isTrue();
+        assertThat(result.output()).contains("binary");
+    }
+
+    @Test
+    void invalidUtf8FileReturnsFailure() throws IOException {
+        Path file = workspace.resolve("invalid.txt");
+        Files.write(file, new byte[]{(byte) 0xC0, (byte) 0x80, 'h', 'i'});
+
+        ToolResult result = tool.execute(call("{\"path\":\"invalid.txt\"}"), context);
+
+        assertThat(result.error()).isTrue();
+        assertThat(result.output()).contains("invalid UTF-8");
+    }
+
+    @Test
     void constructorRejectsNullDependencies() {
         ObjectMapper objectMapper = new ObjectMapper();
         WorkspacePathResolver resolver = new WorkspacePathResolver();

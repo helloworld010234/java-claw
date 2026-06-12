@@ -189,6 +189,31 @@ class WriteFileToolTest {
         assertThat(Files.readString(outside)).isEqualTo("secret");
     }
 
+    @Test
+    void symlinkAncestorEscapeWithMissingSegmentReturnsFailure() throws IOException {
+        Path outsideDir = Files.createTempDirectory(workspace.getParent(), "outside-write-ancestor");
+        Path linkDir = workspace.resolve("link-write-dir");
+        assumeTrue(tryCreateSymbolicLink(linkDir, outsideDir), "Cannot create symbolic link on this system");
+
+        ToolResult result = tool.execute(call(
+            "{\"path\":\"link-write-dir/missing/file.txt\",\"content\":\"hello\"}"
+        ), context);
+
+        assertThat(result.error()).isTrue();
+        assertThat(result.output()).contains("escapes workspace");
+        assertThat(Files.exists(outsideDir.resolve("missing/file.txt"))).isFalse();
+    }
+
+    @Test
+    void nestedDirectoryCreationStaysInsideWorkspace() throws IOException {
+        ToolResult result = tool.execute(call(
+            "{\"path\":\"safe/nested/file.txt\",\"content\":\"hello\"}"
+        ), context);
+
+        assertThat(result.error()).isFalse();
+        assertThat(Files.readString(workspace.resolve("safe/nested/file.txt"))).isEqualTo("hello");
+    }
+
     private ToolCall call(String argumentsJson) {
         return ToolCall.of("call-1", WriteFileTool.NAME, argumentsJson);
     }

@@ -115,6 +115,24 @@ class WorkspacePathResolverTest {
             .hasMessageContaining("escapes workspace");
     }
 
+    @Test
+    void resolveWritableRejectsSymlinkAncestorEscapeWithMissingSegment() throws IOException {
+        Path outsideDir = Files.createTempDirectory(workspace.getParent(), "outside-ancestor-dir");
+        Path linkDir = workspace.resolve("link-dir");
+        assumeTrue(tryCreateSymbolicLink(linkDir, outsideDir), "Cannot create symbolic link on this system");
+
+        assertThatThrownBy(() -> resolver.resolveWritable(workspace, "link-dir/missing/file.txt"))
+            .isInstanceOf(TinyClawDomainException.class)
+            .hasMessageContaining("escapes workspace");
+    }
+
+    @Test
+    void resolveWritableAllowsMissingParentInsideWorkspace() throws IOException {
+        Path resolved = resolver.resolveWritable(workspace, "safe/missing/file.txt");
+
+        assertThat(resolved).isEqualTo(workspace.resolve("safe/missing/file.txt").toAbsolutePath().normalize());
+    }
+
     private boolean tryCreateSymbolicLink(Path link, Path target) {
         try {
             Files.createSymbolicLink(link, target);

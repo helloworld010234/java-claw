@@ -12,22 +12,30 @@ import com.tinyclaw.ports.tool.ToolExecutionContext;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.PushbackReader;
+import java.io.Reader;
+import java.nio.charset.CharsetDecoder;
+import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.FileVisitOption;
+import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.PathMatcher;
+import java.nio.file.SimpleFileVisitor;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.stream.Stream;
 
 /**
  * Searches for a text query inside workspace files.
  *
- * <p>The tool walks files under the requested base directory, optionally filters
- * them by a glob pattern, and returns every line that contains the query text.
- * Results include the relative file path, line number, and a trimmed snippet.
+ * <p>The tool walks files under the requested base directory without following
+ * symbolic links, optionally filters them by a glob pattern, and returns every
+ * line that contains the query text. Results include the relative file path,
+ * line number, and a trimmed snippet. Binary files are sampled and skipped.
  * Output is bounded by result count and character limits to protect context size.</p>
  */
 @Component
@@ -59,6 +67,8 @@ public class SearchTextTool implements AgentTool {
     static final int MAX_RESULTS = 50;
     static final int MAX_OUTPUT_CHARS = 8000;
     static final int SNIPPET_MAX_CHARS = 200;
+    static final int BINARY_CHECK_BYTES = 8192;
+    static final int MAX_LINE_READ_CHARS = 8192;
     static final String TRUNCATED_SUFFIX = "\n...[Output truncated to " + MAX_OUTPUT_CHARS + " chars]";
     static final String RESULT_LIMIT_SUFFIX = "\n...[Result list truncated to " + MAX_RESULTS + " matches]";
 
@@ -104,39 +114,22 @@ public class SearchTextTool implements AgentTool {
             return ToolResult.failure(call.id(), "Path is not a directory: " + arguments.path);
         }
 
-        PathMatcher matcher = null;
+        GlobMatcher matcher = null;
         if (arguments.glob != null && !arguments.glob.isBlank()) {
-            matcher = baseDir.getFileSystem().getPathMatcher("glob:" + arguments.glob);
+            matcher = createMatcher(baseDir, arguments.glob);
         }
         Path workspaceRoot = context.workspaceRoot().toAbsolutePath().normalize();
 
-        List<String> matches = new ArrayList<>();
-        boolean resultLimitReached = false;
-        try (Stream<Path> walk = Files.walk(baseDir, Integer.MAX_VALUE, FileVisitOption.FOLLOW_LINKS)) {
-            for (Path path : walk.toList()) {
-                if (resultLimitReached) {
-                    break;
-                }
-                if (!Files.isRegularFile(path)) {
-                    continue;
-                }
-                if (!isInsideWorkspace(path, workspaceRoot)) {
-                    continue;
-                }
-                if (matcher != null && !matcher.matches(baseDir.relativize(path))) {
-                    continue;
-                }
-                if (isBinary(path)) {
-                    continue;
-                }
-                resultLimitReached = searchInFile(path, baseDir, workspaceRoot, arguments.query, matches);
-            }
+        SearchCollector collector = new SearchCollector(baseDir, workspaceRoot, arguments.query, matcher);
+        try {
+            Files.walkFileTree(baseDir, collector);
         } catch (IOException e) {
             return ToolResult.failure(call.id(), "Failed to search files: " + e.getMessage());
         }
 
+        List<String> matches = collector.matches;
         Collections.sort(matches);
-        String output = formatOutput(matches, resultLimitReached);
+        String output = formatOutput(matches, collector.resultLimitReached, collector.outputLimitReached);
         return ToolResult.success(call.id(), output);
     }
 
@@ -148,58 +141,22 @@ public class SearchTextTool implements AgentTool {
         return pathResolver.resolveExisting(workspaceRoot, path);
     }
 
-    private boolean isInsideWorkspace(Path path, Path workspaceRoot) {
-        try {
-            Path realPath = path.toRealPath();
-            Path realRoot = workspaceRoot.toRealPath();
-            return realPath.startsWith(realRoot);
-        } catch (IOException e) {
-            return false;
+    private GlobMatcher createMatcher(Path baseDir, String glob) {
+        if (glob.contains("/") || glob.contains("\\") || glob.contains("**")) {
+            PathMatcher pathMatcher = baseDir.getFileSystem().getPathMatcher("glob:" + glob);
+            return relativePath -> pathMatcher.matches(relativePath);
         }
+        // For simple file-name patterns like "*.java", match against the file name at any depth.
+        PathMatcher nameMatcher = baseDir.getFileSystem().getPathMatcher("glob:" + glob);
+        return relativePath -> nameMatcher.matches(relativePath.getFileName());
     }
 
-    private boolean isBinary(Path path) {
-        try {
-            byte[] sample = Files.readAllBytes(path);
-            if (sample.length == 0) {
-                return false;
-            }
-            int checkLen = Math.min(sample.length, 8192);
-            for (int i = 0; i < checkLen; i++) {
-                if (sample[i] == 0) {
-                    return true;
-                }
-            }
-            return false;
-        } catch (IOException e) {
-            return true;
-        }
+    @FunctionalInterface
+    private interface GlobMatcher {
+        boolean matches(Path relativePath);
     }
 
-    private boolean searchInFile(Path path, Path baseDir, Path workspaceRoot, String query, List<String> matches) throws IOException {
-        List<String> lines = Files.readAllLines(path, StandardCharsets.UTF_8);
-        String relativePath = workspaceRoot.relativize(path.toAbsolutePath().normalize()).toString().replace("\\", "/");
-        for (int i = 0; i < lines.size(); i++) {
-            String line = lines.get(i);
-            if (line.contains(query)) {
-                matches.add(formatMatch(relativePath, i + 1, line));
-                if (matches.size() >= MAX_RESULTS) {
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
-
-    private String formatMatch(String relativePath, int lineNumber, String line) {
-        String snippet = line.trim();
-        if (snippet.length() > SNIPPET_MAX_CHARS) {
-            snippet = snippet.substring(0, SNIPPET_MAX_CHARS) + "...";
-        }
-        return relativePath + ":" + lineNumber + ": " + snippet;
-    }
-
-    private String formatOutput(List<String> matches, boolean resultLimitReached) {
+    private String formatOutput(List<String> matches, boolean resultLimitReached, boolean outputLimitReached) {
         if (matches.isEmpty()) {
             return "No matches found.";
         }
@@ -207,6 +164,9 @@ public class SearchTextTool implements AgentTool {
         StringBuilder output = new StringBuilder(joined);
         if (resultLimitReached) {
             output.append(RESULT_LIMIT_SUFFIX);
+        }
+        if (outputLimitReached) {
+            output.append(TRUNCATED_SUFFIX);
         }
         if (output.length() > MAX_OUTPUT_CHARS) {
             output.setLength(MAX_OUTPUT_CHARS);
@@ -255,6 +215,145 @@ public class SearchTextTool implements AgentTool {
     private record SearchArguments(String query, String path, String glob, String error) {
         private static SearchArguments error(String message) {
             return new SearchArguments(null, null, null, message);
+        }
+    }
+
+    /**
+     * Streaming file-tree visitor that searches each eligible file line-by-line
+     * without following symbolic links and without reading entire files into memory.
+     */
+    private static final class SearchCollector extends SimpleFileVisitor<Path> {
+
+        private final Path baseDir;
+        private final Path workspaceRoot;
+        private final String query;
+        private final GlobMatcher matcher;
+        private final List<String> matches = new ArrayList<>();
+
+        private boolean resultLimitReached;
+        private boolean outputLimitReached;
+        private int outputLength;
+
+        SearchCollector(Path baseDir, Path workspaceRoot, String query, GlobMatcher matcher) {
+            this.baseDir = baseDir;
+            this.workspaceRoot = workspaceRoot;
+            this.query = query;
+            this.matcher = matcher;
+        }
+
+        @Override
+        public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
+            // Skip symbolic links and non-regular files. Because the walk does not
+            // follow links, a symlink to a directory is also seen as a file here.
+            if (Files.isSymbolicLink(file) || !Files.isRegularFile(file)) {
+                return FileVisitResult.CONTINUE;
+            }
+
+            Path relativeToBase = baseDir.relativize(file);
+            if (matcher != null && !matcher.matches(relativeToBase)) {
+                return FileVisitResult.CONTINUE;
+            }
+
+            if (isBinary(file)) {
+                return FileVisitResult.CONTINUE;
+            }
+
+            try {
+                if (searchInFile(file)) {
+                    return FileVisitResult.TERMINATE;
+                }
+            } catch (IOException e) {
+                // Skip files that cannot be read as text (e.g. invalid UTF-8).
+                return FileVisitResult.CONTINUE;
+            }
+            return FileVisitResult.CONTINUE;
+        }
+
+        private boolean isBinary(Path path) {
+            try (InputStream in = Files.newInputStream(path)) {
+                byte[] sample = new byte[BINARY_CHECK_BYTES];
+                int read = in.read(sample);
+                if (read <= 0) {
+                    return false;
+                }
+                for (int i = 0; i < read; i++) {
+                    if (sample[i] == 0) {
+                        return true;
+                    }
+                }
+                return false;
+            } catch (IOException e) {
+                return true;
+            }
+        }
+
+        private boolean searchInFile(Path file) throws IOException {
+            Path relativeToWorkspace = workspaceRoot.relativize(file.toAbsolutePath().normalize());
+            String relativePath = relativeToWorkspace.toString().replace("\\", "/");
+
+            CharsetDecoder decoder = StandardCharsets.UTF_8.newDecoder()
+                .onMalformedInput(CodingErrorAction.REPORT)
+                .onUnmappableCharacter(CodingErrorAction.REPORT);
+
+            try (Reader reader = new InputStreamReader(Files.newInputStream(file), decoder);
+                 PushbackReader pushbackReader = new PushbackReader(reader)) {
+                String line;
+                int lineNumber = 0;
+                while ((line = readBoundedLine(pushbackReader)) != null) {
+                    lineNumber++;
+                    if (line.contains(query)) {
+                        String match = formatMatch(relativePath, lineNumber, line);
+                        int extra = matches.isEmpty() ? match.length() : 1 + match.length();
+                        if (outputLength + extra > MAX_OUTPUT_CHARS) {
+                            outputLimitReached = true;
+                            return true;
+                        }
+                        outputLength += extra;
+                        matches.add(match);
+                        if (matches.size() >= MAX_RESULTS) {
+                            resultLimitReached = true;
+                            return true;
+                        }
+                    }
+                }
+            } catch (IOException e) {
+                // Treat unreadable text (e.g. invalid UTF-8) as a skip, not a crash.
+                return false;
+            }
+            return false;
+        }
+
+        private String readBoundedLine(PushbackReader reader) throws IOException {
+            StringBuilder buffer = new StringBuilder();
+            int c;
+            while ((c = reader.read()) != -1) {
+                if (c == '\n') {
+                    return buffer.toString();
+                }
+                if (c == '\r') {
+                    int next = reader.read();
+                    if (next != '\n' && next != -1) {
+                        reader.unread(next);
+                    }
+                    return buffer.toString();
+                }
+                if (buffer.length() < MAX_LINE_READ_CHARS) {
+                    buffer.append((char) c);
+                }
+                // Characters beyond the per-line limit are discarded.
+            }
+            if (buffer.isEmpty() && c == -1) {
+                return null;
+            }
+            return buffer.toString();
+        }
+
+        private String formatMatch(String relativePath, int lineNumber, String line) {
+            String snippet = line.trim();
+            if (snippet.length() > SNIPPET_MAX_CHARS) {
+                snippet = snippet.substring(0, SNIPPET_MAX_CHARS) + "...";
+            }
+            return relativePath + ":" + lineNumber + ": " + snippet;
         }
     }
 }

@@ -12,6 +12,11 @@ import com.tinyclaw.ports.tool.ToolExecutionContext;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.Reader;
+import java.nio.charset.CharsetDecoder;
+import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -20,7 +25,9 @@ import java.nio.file.Path;
  * Reads UTF-8 text files from the workspace.
  *
  * <p>Large files are truncated to a bounded number of characters to prevent the
- * agent context from exploding. Binary files are rejected with a safe message.</p>
+ * agent context from exploding. Binary files are detected by sampling the first
+ * bytes and are rejected with a safe message. Invalid UTF-8 is reported as a
+ * clear failure instead of an unhandled exception.</p>
  */
 @Component
 public class ReadFileTool implements AgentTool {
@@ -97,23 +104,38 @@ public class ReadFileTool implements AgentTool {
             return ToolResult.failure(call.id(), "File appears to be binary and cannot be read as text: " + pathArg);
         }
 
-        try {
-            String content = Files.readString(path, StandardCharsets.UTF_8);
-            return ToolResult.success(call.id(), truncate(content));
+        CharsetDecoder decoder = StandardCharsets.UTF_8.newDecoder()
+            .onMalformedInput(CodingErrorAction.REPORT)
+            .onUnmappableCharacter(CodingErrorAction.REPORT);
+
+        try (Reader reader = new InputStreamReader(Files.newInputStream(path), decoder)) {
+            char[] buffer = new char[MAX_OUTPUT_CHARS + 1];
+            int read = reader.read(buffer);
+            if (read <= 0) {
+                return ToolResult.success(call.id(), "");
+            }
+            boolean truncated = read > MAX_OUTPUT_CHARS;
+            String content = new String(buffer, 0, Math.min(read, MAX_OUTPUT_CHARS));
+            if (truncated) {
+                content += TRUNCATED_SUFFIX;
+            }
+            return ToolResult.success(call.id(), content);
         } catch (IOException e) {
+            if (isCharacterCodingException(e)) {
+                return ToolResult.failure(call.id(), "File contains invalid UTF-8 or binary content and cannot be read as text: " + pathArg);
+            }
             return ToolResult.failure(call.id(), "Failed to read file: " + e.getMessage());
         }
     }
 
     private boolean isBinaryFile(Path path) {
-        try {
-            long size = Files.size(path);
-            if (size == 0) {
+        try (InputStream in = Files.newInputStream(path)) {
+            byte[] sample = new byte[BINARY_CHECK_BYTES];
+            int read = in.read(sample);
+            if (read <= 0) {
                 return false;
             }
-            int bytesToRead = (int) Math.min(size, BINARY_CHECK_BYTES);
-            byte[] sample = Files.readAllBytes(path);
-            for (int i = 0; i < bytesToRead; i++) {
+            for (int i = 0; i < read; i++) {
                 if (sample[i] == 0) {
                     return true;
                 }
@@ -124,6 +146,23 @@ public class ReadFileTool implements AgentTool {
         }
     }
 
+    private boolean isCharacterCodingException(IOException e) {
+        Throwable cause = e;
+        while (cause != null) {
+            if (cause instanceof java.nio.charset.CharacterCodingException) {
+                return true;
+            }
+            cause = cause.getCause();
+        }
+        return false;
+    }
+
+    /**
+     * Truncates content to the configured maximum number of characters.
+     *
+     * @param content the raw content
+     * @return the truncated content, or the original content if it fits
+     */
     static String truncate(String content) {
         if (content == null) {
             return "";
