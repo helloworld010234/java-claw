@@ -23,6 +23,8 @@ import com.tinyclaw.ports.llm.LlmRequest;
 import com.tinyclaw.ports.llm.LlmResponse;
 import com.tinyclaw.ports.persistence.AgentRunSummary;
 import com.tinyclaw.ports.persistence.RunRepositoryPort;
+import com.tinyclaw.ports.persistence.ToolExecutionRecord;
+import com.tinyclaw.ports.persistence.ToolExecutionRepositoryPort;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -174,6 +176,26 @@ class BenchmarkRunnerTest {
     }
 
     @Test
+    void toolExecutionsArePersistedWhenRepositoryProvided() {
+        BenchmarkCase caseDef = BenchmarkSuite.editConfigCase();
+        InMemoryToolExecutionRepository toolRepo = new InMemoryToolExecutionRepository();
+        BenchmarkRunner auditedRunner = new BenchmarkRunner(
+            new AgentRunExecutionService(null, null, sessionService, new ObjectMapper(), new NoOpReporter()),
+            createEngine(),
+            20,
+            toolRepo
+        );
+
+        BenchmarkResult result = auditedRunner.run(caseDef, tempDir, BenchmarkFakeLlmFactory.forCase(caseDef));
+
+        assertThat(result.passed()).isTrue();
+        List<ToolExecutionRecord> records = toolRepo.findByRunId(result.runId());
+        assertThat(records).isNotEmpty();
+        assertThat(records.stream().map(ToolExecutionRecord::toolName).distinct())
+            .anyMatch(name -> "edit_file".equals(name) || "read_file".equals(name));
+    }
+
+    @Test
     void usageFromAgentRunResultIsCaptured() {
         BenchmarkCase caseDef = BenchmarkSuite.editConfigCase();
         com.tinyclaw.adapters.llm.fake.FakeLlmGateway fakeGateway = BenchmarkFakeLlmFactory.forCase(caseDef);
@@ -262,5 +284,21 @@ class BenchmarkRunnerTest {
         );
         LlmGateway dummyLlm = request -> new LlmResponse("", List.of(), null);
         return new AgentEngine(dummyLlm, registry, new PromptComposer(), new NoOpReporter(), sessionService);
+    }
+
+    private static class InMemoryToolExecutionRepository implements ToolExecutionRepositoryPort {
+        private final List<ToolExecutionRecord> records = new ArrayList<>();
+
+        @Override
+        public void append(String runId, ToolExecutionRecord record) {
+            records.add(record);
+        }
+
+        @Override
+        public List<ToolExecutionRecord> findByRunId(String runId) {
+            return records.stream()
+                .filter(r -> r.runId().equals(runId))
+                .toList();
+        }
     }
 }

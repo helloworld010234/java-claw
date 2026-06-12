@@ -114,6 +114,42 @@ class ToolRegistryTest {
     }
 
     @Test
+    void approvalRequiredProducesFailureResultWithReason() {
+        SpyTool spyTool = spyTool("shell_command", ToolResult.success("call-1", "should-not-run"));
+        ToolExecutionPolicy approvalPolicy = (call, ctx) ->
+            ToolExecutionDecision.requireApproval("Approval required: apr-1");
+        ToolRegistry registry = new ToolRegistry(List.of(spyTool), List.of(approvalPolicy));
+
+        ToolResult result = registry.execute(ToolCall.of("call-1", "shell_command", "{}"), CONTEXT);
+
+        assertThat(result.error()).isTrue();
+        assertThat(result.output()).isEqualTo("Approval required: apr-1");
+        assertThat(spyTool.executeWasCalled).isFalse();
+    }
+
+    @Test
+    void readOnlyToolsBypassApprovalGateWhileWriteToolsRequireApproval() {
+        AgentTool readTool = tool("read_file", ToolResult.success("call-read", "ok"));
+        SpyTool writeTool = spyTool("write_file", ToolResult.success("call-write", "written"));
+        ToolExecutionPolicy approvalPolicy = (call, ctx) -> {
+            if ("write_file".equals(call.name())) {
+                return ToolExecutionDecision.requireApproval("write_file requires approval");
+            }
+            return ToolExecutionDecision.allow();
+        };
+        ToolRegistry registry = new ToolRegistry(List.of(readTool, writeTool), List.of(approvalPolicy));
+
+        ToolResult readResult = registry.execute(ToolCall.of("call-read", "read_file", "{}"), CONTEXT);
+        ToolResult writeResult = registry.execute(ToolCall.of("call-write", "write_file", "{}"), CONTEXT);
+
+        assertThat(readResult.error()).isFalse();
+        assertThat(readResult.output()).isEqualTo("ok");
+        assertThat(writeResult.error()).isTrue();
+        assertThat(writeResult.output()).isEqualTo("write_file requires approval");
+        assertThat(writeTool.executeWasCalled).isFalse();
+    }
+
+    @Test
     void firstRejectionWinsAndSkipsRemainingPolicies() {
         AgentTool tool = tool("read_file", ToolResult.success("call-1", "ok"));
         ToolExecutionPolicy denyPolicy = (call, ctx) -> ToolExecutionDecision.deny("First blocks");

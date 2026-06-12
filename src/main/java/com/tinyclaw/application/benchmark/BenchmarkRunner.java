@@ -82,13 +82,13 @@ public class BenchmarkRunner {
         Path workspace = createWorkspace(baseWorkspace, benchmarkCase.id());
         String sessionId = "bench-" + benchmarkCase.id() + "-" + UUID.randomUUID().toString().substring(0, 8);
         String runId = UUID.randomUUID().toString();
-        long startedAt = System.currentTimeMillis();
+        long startedAtNanos = System.nanoTime();
 
         try {
             benchmarkCase.setup().accept(workspace);
         } catch (Exception e) {
             log.warn("Benchmark case {} setup failed: {}", benchmarkCase.id(), e.getMessage());
-            return failedResult(benchmarkCase.id(), workspace, startedAt,
+            return failedResult(benchmarkCase.id(), workspace, startedAtNanos,
                 "Setup failed: " + e.getMessage(), null, null, 0, null);
         }
 
@@ -110,12 +110,12 @@ public class BenchmarkRunner {
             );
         } catch (Exception e) {
             log.warn("Benchmark case {} execution failed: {}", benchmarkCase.id(), e.getMessage());
-            return failedResult(benchmarkCase.id(), workspace, startedAt,
+            return failedResult(benchmarkCase.id(), workspace, startedAtNanos,
                 "Execution failed: " + e.getMessage(), runId, sessionId, 0, null);
         }
 
         if (!result.success()) {
-            return failedResult(benchmarkCase.id(), workspace, startedAt,
+            return failedResult(benchmarkCase.id(), workspace, startedAtNanos,
                 result.errorReason() != null ? result.errorReason() : "Agent run failed",
                 runId, sessionId, result.turnCount(), result.totalUsage());
         }
@@ -126,12 +126,12 @@ public class BenchmarkRunner {
             validationOutput = "Validation passed";
         } catch (Exception e) {
             log.warn("Benchmark case {} validation failed: {}", benchmarkCase.id(), e.getMessage());
-            return failedResult(benchmarkCase.id(), workspace, startedAt,
+            return failedResult(benchmarkCase.id(), workspace, startedAtNanos,
                 "Validation failed: " + e.getMessage(), runId, sessionId,
                 result.turnCount(), result.totalUsage());
         }
 
-        long durationMillis = System.currentTimeMillis() - startedAt;
+        long durationMillis = nanosToMillis(startedAtNanos);
         return new BenchmarkResult(
             benchmarkCase.id(),
             BenchmarkStatus.PASSED,
@@ -143,19 +143,20 @@ public class BenchmarkRunner {
             durationMillis,
             result.totalUsage(),
             validationOutput,
+            null,
             null
         );
     }
 
     private BenchmarkResult failedResult(String caseId,
                                          Path workspace,
-                                         long startedAt,
+                                         long startedAtNanos,
                                          String errorReason,
                                          String runId,
                                          String sessionId,
                                          int turnCount,
                                          Usage usage) {
-        long durationMillis = System.currentTimeMillis() - startedAt;
+        long durationMillis = nanosToMillis(startedAtNanos);
         return new BenchmarkResult(
             caseId,
             BenchmarkStatus.FAILED,
@@ -167,8 +168,16 @@ public class BenchmarkRunner {
             durationMillis,
             usage,
             null,
+            null,
             null
         );
+    }
+
+    private long nanosToMillis(long startedAtNanos) {
+        long nanos = System.nanoTime() - startedAtNanos;
+        long millis = nanos / 1_000_000L;
+        // Preserve sub-millisecond work as 1 ms so fast paths still record elapsed time.
+        return millis > 0 ? millis : 1L;
     }
 
     private Path createWorkspace(Path baseWorkspace, String caseId) {

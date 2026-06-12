@@ -4,11 +4,13 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tinyclaw.adapters.web.feishu.FeishuChatOpsMessageSender;
 import com.tinyclaw.adapters.web.feishu.FeishuWebhookController;
 import com.tinyclaw.adapters.web.feishu.dto.FeishuEventParser;
+import com.tinyclaw.application.chatops.ChatOpsApprovalCommandHandler;
 import com.tinyclaw.application.chatops.ChatOpsEventHandler;
 import com.tinyclaw.application.chatops.ChatOpsReporter;
 import com.tinyclaw.application.engine.AgentEngine;
 import com.tinyclaw.application.run.AgentRunExecutionService;
 import com.tinyclaw.ports.chatops.ChatOpsMessageSender;
+import com.tinyclaw.ports.persistence.ApprovalRepositoryPort;
 import com.tinyclaw.ports.reporter.Reporter;
 import com.tinyclaw.ports.session.SessionService;
 import org.slf4j.Logger;
@@ -55,8 +57,11 @@ public class ChatOpsConfiguration {
             ExecutorService agentRunExecutor,
             ChatOpsProperties properties,
             AgentProperties agentProperties,
-            AgentEngine agentEngine) {
+            AgentEngine agentEngine,
+            ApprovalRepositoryPort approvalRepository) {
         Path workspace = Paths.get(properties.getWorkspace()).toAbsolutePath().normalize();
+        ChatOpsApprovalCommandHandler approvalCommandHandler =
+            new ChatOpsApprovalCommandHandler(approvalRepository, null);
         return new ChatOpsEventHandler(
             executionService,
             sessionService,
@@ -64,7 +69,8 @@ public class ChatOpsConfiguration {
             agentRunExecutor,
             workspace,
             agentProperties.getMaxTurns(),
-            agentEngine
+            agentEngine,
+            approvalCommandHandler
         );
     }
 

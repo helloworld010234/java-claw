@@ -84,6 +84,12 @@ public record ChatOpsOutboundMessage(String text, String runId, Instant timestam
         return new ChatOpsOutboundMessage(text, runId, Instant.now(), Type.RUN_COMPLETED);
     }
 
+    public static ChatOpsOutboundMessage runCompleted(String runId, String finalMessagePreview) {
+        String sanitized = ChatOpsSanitizer.sanitize(finalMessagePreview);
+        String text = "✅ " + truncate(sanitized, 200);
+        return new ChatOpsOutboundMessage(text, runId, Instant.now(), Type.RUN_COMPLETED);
+    }
+
     public static ChatOpsOutboundMessage runFailed(String runId, String reason) {
         String sanitized = ChatOpsSanitizer.sanitize(reason);
         String text = "❌ Run failed | " + truncate(sanitized, 200);

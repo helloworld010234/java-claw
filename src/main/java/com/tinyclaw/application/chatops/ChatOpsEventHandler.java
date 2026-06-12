@@ -44,6 +44,7 @@ public class ChatOpsEventHandler {
     private final int maxTurns;
     private final Map<String, Boolean> seenEventIds;
     private final AgentEngine agentEngine;
+    private final ChatOpsApprovalCommandHandler approvalCommandHandler;
     private static final int MAX_SEEN_EVENTS = 10_000;
 
     public ChatOpsEventHandler(AgentRunExecutionService executionService,
@@ -53,6 +54,18 @@ public class ChatOpsEventHandler {
                                Path chatOpsWorkspace,
                                int maxTurns,
                                AgentEngine agentEngine) {
+        this(executionService, sessionService, messageSender, executor, chatOpsWorkspace,
+            maxTurns, agentEngine, null);
+    }
+
+    public ChatOpsEventHandler(AgentRunExecutionService executionService,
+                               SessionService sessionService,
+                               ChatOpsMessageSender messageSender,
+                               ExecutorService executor,
+                               Path chatOpsWorkspace,
+                               int maxTurns,
+                               AgentEngine agentEngine,
+                               ChatOpsApprovalCommandHandler approvalCommandHandler) {
         this.executionService = executionService;
         this.sessionService = sessionService;
         this.messageSender = messageSender;
@@ -60,6 +73,7 @@ public class ChatOpsEventHandler {
         this.chatOpsWorkspace = chatOpsWorkspace;
         this.maxTurns = maxTurns;
         this.agentEngine = agentEngine;
+        this.approvalCommandHandler = approvalCommandHandler;
         this.seenEventIds = Collections.synchronizedMap(new LinkedHashMap<>() {
             @Override
             protected boolean removeEldestEntry(Map.Entry<String, Boolean> eldest) {
@@ -87,6 +101,10 @@ public class ChatOpsEventHandler {
 
         if (event.isUrlVerification()) {
             // URL verification is handled at the adapter layer (challenge response)
+            return true;
+        }
+
+        if (approvalCommandHandler != null && approvalCommandHandler.handle(event, messageSender)) {
             return true;
         }
 

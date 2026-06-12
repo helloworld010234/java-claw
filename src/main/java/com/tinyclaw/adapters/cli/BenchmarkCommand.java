@@ -15,6 +15,7 @@ import com.tinyclaw.config.AgentProperties;
 import com.tinyclaw.config.TinyClawModelProperties;
 import com.tinyclaw.domain.common.DomainGuards;
 import com.tinyclaw.ports.benchmark.GoTestResult;
+import com.tinyclaw.ports.benchmark.GoTestStatus;
 import com.tinyclaw.ports.benchmark.ValidationCommandRunnerPort;
 import com.tinyclaw.ports.llm.LlmGateway;
 import com.tinyclaw.ports.observability.AgentMetricsPort;
@@ -167,6 +168,7 @@ public class BenchmarkCommand implements Callable<Integer> {
 
         List<BenchmarkResult> results = new ArrayList<>();
         boolean anyFailed = false;
+        long suiteStartedAt = System.currentTimeMillis();
         for (BenchmarkCase benchmarkCase : cases) {
             LlmGateway caseGateway = realMode ? llmGateway : BenchmarkFakeLlmFactory.forCase(benchmarkCase);
             BenchmarkResult result = runner.run(benchmarkCase, baseWorkspace, caseGateway, engineType);
@@ -182,7 +184,8 @@ public class BenchmarkCommand implements Callable<Integer> {
             printResult(result);
         }
 
-        printSummary(results, anyFailed);
+        long suiteDurationMillis = System.currentTimeMillis() - suiteStartedAt;
+        printSummary(results, anyFailed, suiteDurationMillis);
         return anyFailed ? 1 : 0;
     }
 
@@ -197,7 +200,13 @@ public class BenchmarkCommand implements Callable<Integer> {
     }
 
     private BenchmarkResult runGoTestIfAvailable(BenchmarkResult result) {
+        long goTestStartedAt = System.currentTimeMillis();
         GoTestResult goResult = goTestRunner.runGoTest(result.workspace());
+        long goTestDurationMillis = System.currentTimeMillis() - goTestStartedAt;
+        long caseDurationMillis = result.durationMillis() != null
+            ? result.durationMillis() + goTestDurationMillis
+            : goTestDurationMillis;
+
         if (goResult.skipped()) {
             return new BenchmarkResult(
                 result.caseId(),
@@ -207,10 +216,11 @@ public class BenchmarkCommand implements Callable<Integer> {
                 result.workspace(),
                 result.turnCount(),
                 result.errorReason(),
-                result.durationMillis(),
+                caseDurationMillis,
                 result.usage(),
                 result.validationOutput(),
-                "Skipped: " + goResult.reason()
+                "Skipped: " + goResult.reason(),
+                GoTestStatus.SKIPPED
             );
         }
         if (!goResult.passed()) {
@@ -222,10 +232,11 @@ public class BenchmarkCommand implements Callable<Integer> {
                 result.workspace(),
                 result.turnCount(),
                 goResult.reason(),
-                result.durationMillis(),
+                caseDurationMillis,
                 result.usage(),
                 result.validationOutput(),
-                goResult.output()
+                goResult.output(),
+                GoTestStatus.FAILED
             );
         }
         return new BenchmarkResult(
@@ -236,16 +247,20 @@ public class BenchmarkCommand implements Callable<Integer> {
             result.workspace(),
             result.turnCount(),
             result.errorReason(),
-            result.durationMillis(),
+            caseDurationMillis,
             result.usage(),
             result.validationOutput(),
-            goResult.output()
+            goResult.output(),
+            GoTestStatus.PASSED
         );
     }
 
     private void printResult(BenchmarkResult result) {
         System.out.println("- case: " + result.caseId());
         System.out.println("  status: " + (result.passed() ? "PASSED" : "FAILED"));
+        if (result.goTestStatus() != null) {
+            System.out.println("  goTestStatus: " + result.goTestStatus());
+        }
         System.out.println("  runId: " + result.runId());
         System.out.println("  sessionId: " + result.sessionId());
         System.out.println("  workspace: " + result.workspace().toAbsolutePath());
@@ -254,7 +269,7 @@ public class BenchmarkCommand implements Callable<Integer> {
             System.out.println("  durationMs: " + result.durationMillis());
         }
         if (result.errorReason() != null) {
-            System.out.println("  error: " + truncateLine(result.errorReason()));
+            System.out.println("  error: " + result.errorReason());
         }
         if (result.validationOutput() != null) {
             System.out.println("  validationOutput: " + truncateLine(result.validationOutput()));
@@ -282,12 +297,20 @@ public class BenchmarkCommand implements Callable<Integer> {
         return line.substring(0, MAX_OUTPUT_PREVIEW_LINE_LENGTH) + "...";
     }
 
-    private void printSummary(List<BenchmarkResult> results, boolean anyFailed) {
+    private void printSummary(List<BenchmarkResult> results, boolean anyFailed, long suiteDurationMillis) {
         long passed = results.stream().filter(BenchmarkResult::passed).count();
+        long skippedGoTests = results.stream()
+            .map(BenchmarkResult::goTestStatus)
+            .filter(s -> s == GoTestStatus.SKIPPED)
+            .count();
+        double passRate = results.isEmpty() ? 0.0 : (passed * 100.0) / results.size();
         System.out.println("summary:");
         System.out.println("  total: " + results.size());
         System.out.println("  passed: " + passed);
         System.out.println("  failed: " + (results.size() - passed));
+        System.out.println("  skippedGoTests: " + skippedGoTests);
+        System.out.printf("  passRate: %.1f%%%n", passRate);
+        System.out.println("  durationMs: " + suiteDurationMillis);
         System.out.println("  overall: " + (anyFailed ? "FAILED" : "PASSED"));
     }
 }

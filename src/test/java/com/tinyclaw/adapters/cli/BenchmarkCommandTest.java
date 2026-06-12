@@ -106,6 +106,8 @@ class BenchmarkCommandTest {
         assertThat(output).contains("case: test_001_edit");
         assertThat(output).contains("case: test_002_code_gen");
         assertThat(output).contains("status: PASSED");
+        assertThat(output).contains("passRate: 100.0%");
+        assertThat(output).contains("durationMs:");
         assertThat(output).contains("overall: PASSED");
     }
 
@@ -259,7 +261,9 @@ class BenchmarkCommandTest {
         assertThat(exitCode).isZero();
         String output = out.toString();
         assertThat(output).contains("case: test_002_code_gen");
+        assertThat(output).contains("goTestStatus: SKIPPED");
         assertThat(output).contains("Skipped: Go not installed");
+        assertThat(output).contains("skippedGoTests: 1");
     }
 
     @Test
@@ -277,6 +281,7 @@ class BenchmarkCommandTest {
         assertThat(exitCode).isZero();
         String output = out.toString();
         assertThat(output).contains("case: test_002_code_gen");
+        assertThat(output).contains("goTestStatus: PASSED");
         assertThat(output).contains("goTestOutput: |");
         assertThat(output).contains("ok");
     }
@@ -297,8 +302,46 @@ class BenchmarkCommandTest {
         String output = out.toString();
         assertThat(output).contains("case: test_002_code_gen");
         assertThat(output).contains("status: FAILED");
+        assertThat(output).contains("goTestStatus: FAILED");
         assertThat(output).contains("error: exit code 1");
         assertThat(output).contains("--- FAIL: TestMultiply");
+    }
+
+    @Test
+    void benchGoTestDurationIsIncludedInCaseDuration() {
+        ValidationCommandRunnerPort runner = FakeValidationCommandRunner.withDelay(50L, GoTestResult.passed("ok\n"));
+        BenchmarkCommand cmd = createCommandWithProperties(new TinyClawModelProperties(), Optional.empty(), runner);
+
+        long before = System.currentTimeMillis();
+        int exitCode = new CommandLine(cmd).execute(
+            "--engine", "fake",
+            "--go-test",
+            "--workspace-root", tempDir.resolve("workspaces").toString()
+        );
+        long elapsed = System.currentTimeMillis() - before;
+        restoreStreams();
+
+        assertThat(exitCode).isZero();
+        String output = out.toString();
+        assertThat(output).contains("case: test_002_code_gen");
+        assertThat(output).contains("goTestStatus: PASSED");
+        // The printed case duration must reflect the injected go-test delay.
+        long durationMs = extractCaseDuration(output, "test_002_code_gen");
+        assertThat(durationMs).isGreaterThanOrEqualTo(50L);
+        assertThat(durationMs).isLessThanOrEqualTo(elapsed);
+    }
+
+    private long extractCaseDuration(String output, String caseId) {
+        String marker = "- case: " + caseId;
+        int caseStart = output.indexOf(marker);
+        int summaryStart = output.indexOf("summary:");
+        String caseBlock = output.substring(caseStart, summaryStart > caseStart ? summaryStart : output.length());
+        for (String line : caseBlock.split("\n")) {
+            if (line.trim().startsWith("durationMs:")) {
+                return Long.parseLong(line.trim().substring("durationMs:".length()).trim());
+            }
+        }
+        return -1L;
     }
 
     @Test

@@ -9,6 +9,8 @@ import com.tinyclaw.application.engine.AgentRunResult;
 import com.tinyclaw.application.engine.PromptComposer;
 import com.tinyclaw.application.run.AgentRunExecutionService;
 import com.tinyclaw.application.tool.ToolRegistry;
+import com.tinyclaw.domain.approval.ApprovalRequest;
+import com.tinyclaw.domain.approval.ApprovalStatus;
 import com.tinyclaw.domain.session.Session;
 import com.tinyclaw.ports.chatops.ChatOpsEvent;
 import com.tinyclaw.ports.chatops.FakeChatOpsMessageSender;
@@ -24,8 +26,11 @@ import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
 
 import java.nio.file.Path;
+import java.time.Clock;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -341,6 +346,88 @@ class ChatOpsEventHandlerTest {
         // The outbound message must not contain the raw secret
         assertThat(countingSender.getMessages()).allMatch(m -> !m.text().contains("sk-live-12345"));
         assertThat(countingSender.getMessages()).anyMatch(m -> m.text().contains("***"));
+    }
+
+    @Test
+    void approvalCommandIsHandledByEventHandler() {
+        FakeChatOpsMessageSender commandSender = new FakeChatOpsMessageSender();
+        InMemoryApprovalRepository approvalRepository = new InMemoryApprovalRepository();
+        ApprovalRequest pending = ApprovalRequest.pending(
+            "apr-chatops", "run-1", "sess-1", "tc-1", "shell_command", "args", Instant.now()
+        );
+        approvalRepository.save(pending);
+
+        ChatOpsApprovalCommandHandler approvalHandler = new ChatOpsApprovalCommandHandler(
+            approvalRepository, Clock.systemUTC()
+        );
+        ChatOpsEventHandler commandEnabledHandler = new ChatOpsEventHandler(
+            executionService, sessionService, commandSender, directExecutor,
+            Path.of("/tmp/chatops").toAbsolutePath(), 10,
+            new AgentEngine(
+                new FakeLlmGateway(List.of(new LlmResponse("Done", List.of(), null))),
+                new ToolRegistry(List.of()),
+                new PromptComposer(),
+                new NoOpReporter(),
+                sessionService
+            ),
+            approvalHandler
+        );
+
+        ChatOpsEvent event = new ChatOpsEvent("evt-approve", "msg-approve", "chat-1", "user-1",
+            "approve apr-chatops", Instant.now(), ChatOpsEvent.Type.TEXT_MESSAGE);
+        boolean accepted = commandEnabledHandler.handle(event);
+
+        assertThat(accepted).isTrue();
+        ApprovalRequest updated = approvalRepository.findById("apr-chatops").orElseThrow();
+        assertThat(updated.status()).isEqualTo(ApprovalStatus.APPROVED);
+        assertThat(commandSender.getMessages()).anyMatch(m -> m.text().contains("approved"));
+    }
+
+    private static class InMemoryApprovalRepository implements com.tinyclaw.ports.persistence.ApprovalRepositoryPort {
+        private final List<ApprovalRequest> requests = new ArrayList<>();
+
+        @Override
+        public void save(ApprovalRequest request) {
+            requests.add(request);
+        }
+
+        @Override
+        public Optional<ApprovalRequest> findById(String id) {
+            return requests.stream().filter(r -> r.id().equals(id)).findFirst();
+        }
+
+        @Override
+        public Optional<ApprovalRequest> findByRunIdAndToolCallId(String runId, String toolCallId) {
+            return requests.stream()
+                .filter(r -> r.runId().equals(runId) && r.toolCallId().equals(toolCallId))
+                .findFirst();
+        }
+
+        @Override
+        public List<ApprovalRequest> findByRunId(String runId) {
+            return requests.stream().filter(r -> r.runId().equals(runId)).toList();
+        }
+
+        @Override
+        public List<ApprovalRequest> findByStatus(ApprovalStatus status) {
+            return requests.stream().filter(r -> r.status() == status).toList();
+        }
+
+        @Override
+        public List<ApprovalRequest> findAll() {
+            return List.copyOf(requests);
+        }
+
+        @Override
+        public void update(ApprovalRequest request) {
+            requests.removeIf(r -> r.id().equals(request.id()));
+            requests.add(request);
+        }
+
+        @Override
+        public boolean claimForResume(String approvalId, Instant now) {
+            return false;
+        }
     }
 
     @Test
