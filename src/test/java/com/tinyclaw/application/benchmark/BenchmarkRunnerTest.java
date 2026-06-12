@@ -15,6 +15,7 @@ import com.tinyclaw.application.tool.AllowAllPolicy;
 import com.tinyclaw.application.tool.ToolRegistry;
 import com.tinyclaw.domain.message.Message;
 import com.tinyclaw.domain.message.Role;
+import com.tinyclaw.domain.message.Usage;
 import com.tinyclaw.ports.llm.LlmGateway;
 import com.tinyclaw.ports.llm.LlmRequest;
 import com.tinyclaw.ports.llm.LlmResponse;
@@ -63,6 +64,7 @@ class BenchmarkRunnerTest {
         assertThat(result.passed()).isTrue();
         assertThat(result.caseId()).isEqualTo(BenchmarkSuite.EDIT_CONFIG_CASE_ID);
         assertThat(result.turnCount()).isGreaterThan(0);
+        assertThat(result.durationMillis()).isNotNull().isPositive();
         assertThat(Files.readString(result.workspace().resolve("config.json")))
             .contains("\"version\": \"v2.0.0\"");
     }
@@ -75,6 +77,7 @@ class BenchmarkRunnerTest {
         assertThat(result.passed()).isTrue();
         assertThat(result.caseId()).isEqualTo(BenchmarkSuite.WRITE_TEST_CASE_ID);
         assertThat(result.turnCount()).isGreaterThan(0);
+        assertThat(result.durationMillis()).isNotNull().isPositive();
         assertThat(result.workspace().resolve("math_test.go")).exists();
     }
 
@@ -99,6 +102,7 @@ class BenchmarkRunnerTest {
 
         assertThat(result.passed()).isFalse();
         assertThat(result.errorReason()).contains("Validation failed");
+        assertThat(result.durationMillis()).isNotNull().isPositive();
     }
 
     @Test
@@ -111,5 +115,39 @@ class BenchmarkRunnerTest {
         assertThat(messages).isNotEmpty();
         assertThat(messages.stream().anyMatch(m -> m.role() == Role.USER)).isTrue();
         assertThat(messages.stream().anyMatch(m -> m.role() == Role.ASSISTANT)).isTrue();
+    }
+
+    @Test
+    void engineTypeIsPersisted() {
+        BenchmarkCase caseDef = BenchmarkSuite.editConfigCase();
+        com.tinyclaw.adapters.llm.fake.FakeLlmGateway fakeGateway = BenchmarkFakeLlmFactory.forCase(caseDef);
+        LlmGateway trackingGateway = request -> {
+            fakeGateway.recordedRequests();
+            return fakeGateway.generate(request);
+        };
+
+        BenchmarkResult result = runner.run(caseDef, tempDir, trackingGateway, "custom-engine");
+
+        assertThat(result.passed()).isTrue();
+    }
+
+    @Test
+    void usageFromAgentRunResultIsCaptured() {
+        BenchmarkCase caseDef = BenchmarkSuite.editConfigCase();
+        com.tinyclaw.adapters.llm.fake.FakeLlmGateway fakeGateway = BenchmarkFakeLlmFactory.forCase(caseDef);
+        LlmGateway usageGateway = request -> {
+            LlmResponse base = fakeGateway.generate(request);
+            if (base.hasToolCalls()) {
+                return new LlmResponse(base.content(), base.toolCalls(), new Usage(10, 5));
+            }
+            return new LlmResponse(base.content(), base.toolCalls(), new Usage(3, 7));
+        };
+
+        BenchmarkResult result = runner.run(caseDef, tempDir, usageGateway);
+
+        assertThat(result.passed()).isTrue();
+        assertThat(result.usage()).isNotNull();
+        assertThat(result.usage().promptTokens()).isPositive();
+        assertThat(result.usage().completionTokens()).isPositive();
     }
 }

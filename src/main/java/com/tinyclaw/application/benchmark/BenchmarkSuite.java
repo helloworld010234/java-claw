@@ -1,5 +1,8 @@
 package com.tinyclaw.application.benchmark;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -13,6 +16,7 @@ public final class BenchmarkSuite {
 
     public static final String EDIT_CONFIG_CASE_ID = "test_001_edit";
     public static final String WRITE_TEST_CASE_ID = "test_002_code_gen";
+    public static final String FAILING_CASE_ID = "test_003_fail";
 
     private static final String CONFIG_JSON = "{\"name\": \"tiny-claw\", \"version\": \"v1.0.0\"}";
 
@@ -24,11 +28,11 @@ public final class BenchmarkSuite {
         }
         """;
 
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+
     private BenchmarkSuite() {
         // utility class
     }
-
-    public static final String FAILING_CASE_ID = "test_003_fail";
 
     /**
      * Returns the default benchmark cases.
@@ -62,6 +66,9 @@ public final class BenchmarkSuite {
 
     /**
      * Case 1: the agent must edit config.json and change the version field.
+     *
+     * <p>Validation asserts that the file remains valid JSON, the {@code name}
+     * field is unchanged, and {@code version} is exactly {@code v2.0.0}.</p>
      */
     public static BenchmarkCase editConfigCase() {
         return new BenchmarkCase(
@@ -74,13 +81,35 @@ public final class BenchmarkSuite {
             workspace -> writeString(workspace.resolve("config.json"), CONFIG_JSON),
             workspace -> {
                 String content = readString(workspace.resolve("config.json"));
-                requireContains(content, "\"version\": \"v2.0.0\"", "config.json");
+                JsonNode root;
+                try {
+                    root = OBJECT_MAPPER.readTree(content);
+                } catch (IOException e) {
+                    throw new BenchmarkException("config.json is not valid JSON: " + e.getMessage(), e);
+                }
+                if (!root.isObject()) {
+                    throw new BenchmarkException("config.json root is not a JSON object", null);
+                }
+                JsonNode nameNode = root.get("name");
+                if (nameNode == null || !"tiny-claw".equals(nameNode.asText())) {
+                    throw new BenchmarkException("config.json name field was corrupted or removed", null);
+                }
+                JsonNode versionNode = root.get("version");
+                if (versionNode == null || !"v2.0.0".equals(versionNode.asText())) {
+                    throw new BenchmarkException(
+                        "Expected config.json version to be exactly 'v2.0.0', got: "
+                            + (versionNode == null ? "missing" : versionNode.asText()), null);
+                }
             }
         );
     }
 
     /**
      * Case 2: the agent must read math.go and create math_test.go with a TestMultiply case.
+     *
+     * <p>Validation checks that the generated file is a syntactically plausible Go test
+     * containing the required package, imports, test function, function call and an
+     * assertion or table-driven test case.</p>
      */
     public static BenchmarkCase writeMathTestCase() {
         return new BenchmarkCase(
@@ -97,10 +126,24 @@ public final class BenchmarkSuite {
                     throw new BenchmarkException("math_test.go was not created", null);
                 }
                 String content = readString(testFile);
+                requireContains(content, "package math", "math_test.go");
+                requireContains(content, "import \"testing\"", "math_test.go");
                 requireContains(content, "TestMultiply", "math_test.go");
                 requireContains(content, "Multiply(", "math_test.go");
+                if (!hasAssertionOrTableCase(content)) {
+                    throw new BenchmarkException(
+                        "math_test.go must contain a multiplication assertion or table-driven test case", null);
+                }
             }
         );
+    }
+
+    private static boolean hasAssertionOrTableCase(String content) {
+        String normalized = content.toLowerCase();
+        boolean hasTableCase = normalized.contains("cases :=") || normalized.contains("[]struct");
+        boolean hasAssertion = normalized.contains("t.errorf") || normalized.contains("t.fatalf")
+            || normalized.contains("if got !=") || normalized.contains("reflect.deepequal");
+        return hasTableCase || hasAssertion;
     }
 
     private static void writeString(Path path, String content) {

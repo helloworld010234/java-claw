@@ -6,6 +6,8 @@ import com.tinyclaw.application.benchmark.BenchmarkResult;
 import com.tinyclaw.application.benchmark.BenchmarkRunner;
 import com.tinyclaw.application.benchmark.BenchmarkStatus;
 import com.tinyclaw.application.benchmark.BenchmarkSuite;
+import com.tinyclaw.application.benchmark.GoTestExecutor;
+import com.tinyclaw.application.benchmark.GoTestResult;
 import com.tinyclaw.application.engine.AgentEngine;
 import com.tinyclaw.application.run.AgentRunExecutionService;
 import com.tinyclaw.application.tool.AllowAllPolicy;
@@ -14,8 +16,6 @@ import com.tinyclaw.config.AgentProperties;
 import com.tinyclaw.config.TinyClawModelProperties;
 import com.tinyclaw.domain.common.DomainGuards;
 import com.tinyclaw.ports.llm.LlmGateway;
-import com.tinyclaw.ports.llm.LlmRequest;
-import com.tinyclaw.ports.llm.LlmResponse;
 import com.tinyclaw.ports.observability.AgentMetricsPort;
 import com.tinyclaw.ports.persistence.ToolExecutionRepositoryPort;
 import com.tinyclaw.ports.tool.AgentTool;
@@ -27,6 +27,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.Callable;
 
 /**
@@ -44,6 +45,9 @@ import java.util.concurrent.Callable;
 )
 public class BenchmarkCommand implements Callable<Integer> {
 
+    private static final String FAKE_ENGINE_TYPE = "benchmark-fake";
+    private static final String REAL_ENGINE_TYPE = "benchmark-real";
+
     private final AgentRunExecutionService runExecutionService;
     private final AgentEngine agentEngine;
     private final AgentProperties agentProperties;
@@ -51,6 +55,7 @@ public class BenchmarkCommand implements Callable<Integer> {
     private final ToolExecutionRepositoryPort toolExecutionRepository;
     private final List<AgentTool> tools;
     private final AgentMetricsPort agentMetrics;
+    private final Optional<LlmGateway> realLlmGateway;
 
     public BenchmarkCommand(AgentRunExecutionService runExecutionService,
                             AgentEngine agentEngine,
@@ -59,6 +64,19 @@ public class BenchmarkCommand implements Callable<Integer> {
                             ToolExecutionRepositoryPort toolExecutionRepository,
                             List<AgentTool> tools,
                             AgentMetricsPort agentMetrics) {
+        this(runExecutionService, agentEngine, agentProperties, modelProperties,
+            toolExecutionRepository, tools, agentMetrics, Optional.empty());
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public BenchmarkCommand(AgentRunExecutionService runExecutionService,
+                            AgentEngine agentEngine,
+                            AgentProperties agentProperties,
+                            TinyClawModelProperties modelProperties,
+                            ToolExecutionRepositoryPort toolExecutionRepository,
+                            List<AgentTool> tools,
+                            AgentMetricsPort agentMetrics,
+                            Optional<LlmGateway> realLlmGateway) {
         this.runExecutionService = DomainGuards.requireNonNull(runExecutionService, "runExecutionService");
         this.agentEngine = DomainGuards.requireNonNull(agentEngine, "agentEngine");
         this.agentProperties = agentProperties != null ? agentProperties : new AgentProperties();
@@ -66,6 +84,7 @@ public class BenchmarkCommand implements Callable<Integer> {
         this.toolExecutionRepository = toolExecutionRepository;
         this.tools = DomainGuards.requireNonNull(tools, "tools");
         this.agentMetrics = agentMetrics;
+        this.realLlmGateway = realLlmGateway != null ? realLlmGateway : Optional.empty();
     }
 
     @CommandLine.Option(names = {"--engine"}, description = "Engine: fake (default) or real")
@@ -89,7 +108,8 @@ public class BenchmarkCommand implements Callable<Integer> {
             return 2;
         }
 
-        if ("real".equalsIgnoreCase(engine)) {
+        boolean realMode = "real".equalsIgnoreCase(engine);
+        if (realMode) {
             if (!modelProperties.isEnabled()) {
                 System.err.println("Real LLM engine is not enabled. To use --engine real, set:");
                 System.err.println("  tiny-claw.model.enabled=true");
@@ -98,6 +118,12 @@ public class BenchmarkCommand implements Callable<Integer> {
             }
             if (modelProperties.getApiKey() == null || modelProperties.getApiKey().isBlank()) {
                 System.err.println("Real LLM engine requires an API key.");
+                System.err.println("Set tiny-claw.model.api-key or the LLM_API_KEY environment variable.");
+                return 2;
+            }
+            if (realLlmGateway.isEmpty()) {
+                System.err.println("Real LLM gateway is not available.");
+                System.err.println("Ensure tiny-claw.model.enabled=true and a supported provider is configured.");
                 return 2;
             }
         }
@@ -114,15 +140,19 @@ public class BenchmarkCommand implements Callable<Integer> {
         BenchmarkRunner runner = new BenchmarkRunner(
             runExecutionService, benchmarkEngine, agentProperties.getMaxTurns(), toolExecutionRepository
         );
+        GoTestExecutor goTestExecutor = new GoTestExecutor();
+
+        String engineType = realMode ? REAL_ENGINE_TYPE : FAKE_ENGINE_TYPE;
+        LlmGateway llmGateway = realMode ? realLlmGateway.get() : null;
 
         List<BenchmarkResult> results = new ArrayList<>();
         boolean anyFailed = false;
         for (BenchmarkCase benchmarkCase : cases) {
-            LlmGateway llmGateway = createLlmGateway(benchmarkCase);
-            BenchmarkResult result = runner.run(benchmarkCase, baseWorkspace, llmGateway);
+            LlmGateway caseGateway = realMode ? llmGateway : BenchmarkFakeLlmFactory.forCase(benchmarkCase);
+            BenchmarkResult result = runner.run(benchmarkCase, baseWorkspace, caseGateway, engineType);
 
             if (goTest && result.passed() && BenchmarkSuite.WRITE_TEST_CASE_ID.equals(result.caseId())) {
-                result = runGoTestIfAvailable(result);
+                result = runGoTestIfAvailable(result, goTestExecutor);
             }
 
             results.add(result);
@@ -146,53 +176,51 @@ public class BenchmarkCommand implements Callable<Integer> {
             .toList();
     }
 
-    private LlmGateway createLlmGateway(BenchmarkCase benchmarkCase) {
-        if ("fake".equalsIgnoreCase(engine)) {
-            return BenchmarkFakeLlmFactory.forCase(benchmarkCase);
+    private BenchmarkResult runGoTestIfAvailable(BenchmarkResult result, GoTestExecutor executor) {
+        GoTestResult goResult = executor.runGoTest(result.workspace());
+        if (goResult.skipped()) {
+            return new BenchmarkResult(
+                result.caseId(),
+                result.status(),
+                result.runId(),
+                result.sessionId(),
+                result.workspace(),
+                result.turnCount(),
+                result.errorReason(),
+                result.durationMillis(),
+                result.usage(),
+                result.validationOutput(),
+                "Skipped: " + goResult.reason()
+            );
         }
-        // Real engine: reuse the default LLM bean behavior by delegating through
-        // a simple gateway. This path requires a real API key.
-        return request -> new LlmResponse(
-            "Real engine benchmark is not yet fully supported; use --engine fake.", List.of(), null
+        if (!goResult.passed()) {
+            return new BenchmarkResult(
+                result.caseId(),
+                BenchmarkStatus.FAILED,
+                result.runId(),
+                result.sessionId(),
+                result.workspace(),
+                result.turnCount(),
+                goResult.reason(),
+                result.durationMillis(),
+                result.usage(),
+                result.validationOutput(),
+                goResult.output()
+            );
+        }
+        return new BenchmarkResult(
+            result.caseId(),
+            result.status(),
+            result.runId(),
+            result.sessionId(),
+            result.workspace(),
+            result.turnCount(),
+            result.errorReason(),
+            result.durationMillis(),
+            result.usage(),
+            result.validationOutput(),
+            goResult.output()
         );
-    }
-
-    private BenchmarkResult runGoTestIfAvailable(BenchmarkResult result) {
-        try {
-            ProcessBuilder pb = new ProcessBuilder("go", "test", "./...");
-            pb.directory(result.workspace().toFile());
-            pb.redirectErrorStream(true);
-            Process process = pb.start();
-            boolean finished = process.waitFor(30, java.util.concurrent.TimeUnit.SECONDS);
-            if (!finished) {
-                process.destroyForcibly();
-                return new BenchmarkResult(
-                    result.caseId(),
-                    BenchmarkStatus.FAILED,
-                    result.runId(),
-                    result.sessionId(),
-                    result.workspace(),
-                    result.turnCount(),
-                    "go test timed out"
-                );
-            }
-            if (process.exitValue() != 0) {
-                return new BenchmarkResult(
-                    result.caseId(),
-                    BenchmarkStatus.FAILED,
-                    result.runId(),
-                    result.sessionId(),
-                    result.workspace(),
-                    result.turnCount(),
-                    "go test failed with exit code " + process.exitValue()
-                );
-            }
-            return result;
-        } catch (Exception e) {
-            // Go is not installed or not on PATH: treat as a non-fatal skip
-            // but keep the original result passed.
-            return result;
-        }
     }
 
     private void printResult(BenchmarkResult result) {
@@ -202,8 +230,20 @@ public class BenchmarkCommand implements Callable<Integer> {
         System.out.println("  sessionId: " + result.sessionId());
         System.out.println("  workspace: " + result.workspace().toAbsolutePath());
         System.out.println("  turns: " + result.turnCount());
+        if (result.durationMillis() != null) {
+            System.out.println("  durationMs: " + result.durationMillis());
+        }
         if (result.errorReason() != null) {
             System.out.println("  error: " + result.errorReason());
+        }
+        if (result.goTestOutput() != null) {
+            System.out.println("  goTestOutput: |");
+            for (String line : result.goTestOutput().split("\r?\n", 6)) {
+                System.out.println("    " + line);
+            }
+            if (result.goTestOutput().split("\r?\n").length > 5) {
+                System.out.println("    ...");
+            }
         }
     }
 
