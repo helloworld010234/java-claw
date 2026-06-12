@@ -1,4 +1,4 @@
-package com.tinyclaw.application.benchmark;
+package com.tinyclaw.ports.benchmark;
 
 import com.tinyclaw.domain.common.DomainGuards;
 

@@ -1,5 +1,6 @@
-package com.tinyclaw.application.benchmark;
+package com.tinyclaw.adapters.benchmark;
 
+import com.tinyclaw.ports.benchmark.GoTestResult;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -9,21 +10,21 @@ import java.nio.file.Path;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-class GoTestExecutorTest {
+class ProcessBuilderValidationCommandRunnerTest {
 
     @TempDir
     Path tempDir;
 
     @Test
     void skipsWhenGoIsNotInstalled() {
-        GoTestExecutor executor = new GoTestExecutor(5, 1_000) {
+        ProcessBuilderValidationCommandRunner runner = new ProcessBuilderValidationCommandRunner(5, 1_000) {
             @Override
             boolean goExists() {
                 return false;
             }
         };
 
-        GoTestResult result = executor.runGoTest(tempDir);
+        GoTestResult result = runner.runGoTest(tempDir);
 
         assertThat(result.skipped()).isTrue();
         assertThat(result.reason()).containsIgnoringCase("go");
@@ -32,7 +33,7 @@ class GoTestExecutorTest {
     @Test
     void runsGoTestAndPassesForValidCode() throws IOException {
         writeString(tempDir.resolve("math.go"), "package math\n");
-        GoTestExecutor executor = new GoTestExecutor(30, 10_000) {
+        ProcessBuilderValidationCommandRunner runner = new ProcessBuilderValidationCommandRunner(30, 10_000) {
             @Override
             boolean goExists() {
                 return true;
@@ -52,7 +53,7 @@ class GoTestExecutorTest {
             }
         };
 
-        GoTestResult result = executor.runGoTest(tempDir);
+        GoTestResult result = runner.runGoTest(tempDir);
 
         assertThat(result.passed()).isTrue();
         assertThat(result.output()).contains("ok");
@@ -62,7 +63,7 @@ class GoTestExecutorTest {
     @Test
     void doesNotInitModuleWhenGoModAlreadyExists() throws IOException {
         Files.writeString(tempDir.resolve("go.mod"), "module bench\n");
-        GoTestExecutor executor = new GoTestExecutor(30, 10_000) {
+        ProcessBuilderValidationCommandRunner runner = new ProcessBuilderValidationCommandRunner(30, 10_000) {
             @Override
             boolean goExists() {
                 return true;
@@ -74,7 +75,7 @@ class GoTestExecutorTest {
             }
         };
 
-        GoTestResult result = executor.runGoTest(tempDir);
+        GoTestResult result = runner.runGoTest(tempDir);
 
         assertThat(result.passed()).isTrue();
     }
@@ -82,7 +83,7 @@ class GoTestExecutorTest {
     @Test
     void capturesFailureForFailingTest() throws IOException {
         writeString(tempDir.resolve("math.go"), "package math\n");
-        GoTestExecutor executor = new GoTestExecutor(30, 10_000) {
+        ProcessBuilderValidationCommandRunner runner = new ProcessBuilderValidationCommandRunner(30, 10_000) {
             @Override
             boolean goExists() {
                 return true;
@@ -97,7 +98,7 @@ class GoTestExecutorTest {
             }
         };
 
-        GoTestResult result = executor.runGoTest(tempDir);
+        GoTestResult result = runner.runGoTest(tempDir);
 
         assertThat(result.passed()).isFalse();
         assertThat(result.reason()).contains("exit code");
@@ -107,7 +108,7 @@ class GoTestExecutorTest {
     @Test
     void reportsTimeoutWithPartialOutput() throws IOException {
         writeString(tempDir.resolve("math.go"), "package math\n");
-        GoTestExecutor executor = new GoTestExecutor(1, 1_000) {
+        ProcessBuilderValidationCommandRunner runner = new ProcessBuilderValidationCommandRunner(1, 1_000) {
             @Override
             boolean goExists() {
                 return true;
@@ -122,7 +123,7 @@ class GoTestExecutorTest {
             }
         };
 
-        GoTestResult result = executor.runGoTest(tempDir);
+        GoTestResult result = runner.runGoTest(tempDir);
 
         assertThat(result.passed()).isFalse();
         assertThat(result.reason()).containsIgnoringCase("timed out");
@@ -132,7 +133,7 @@ class GoTestExecutorTest {
     @Test
     void boundedOutputTruncatesLargeOutput() throws IOException {
         writeString(tempDir.resolve("math.go"), "package math\n");
-        GoTestExecutor executor = new GoTestExecutor(30, 20) {
+        ProcessBuilderValidationCommandRunner runner = new ProcessBuilderValidationCommandRunner(30, 20) {
             @Override
             boolean goExists() {
                 return true;
@@ -147,7 +148,7 @@ class GoTestExecutorTest {
             }
         };
 
-        GoTestResult result = executor.runGoTest(tempDir);
+        GoTestResult result = runner.runGoTest(tempDir);
 
         assertThat(result.passed()).isTrue();
         assertThat(result.output()).hasSizeLessThan(100);

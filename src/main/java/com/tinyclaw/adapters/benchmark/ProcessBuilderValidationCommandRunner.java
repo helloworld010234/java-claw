@@ -1,6 +1,9 @@
-package com.tinyclaw.application.benchmark;
+package com.tinyclaw.adapters.benchmark;
 
 import com.tinyclaw.domain.common.DomainGuards;
+import com.tinyclaw.ports.benchmark.GoTestResult;
+import com.tinyclaw.ports.benchmark.GoTestStatus;
+import com.tinyclaw.ports.benchmark.ValidationCommandRunnerPort;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -18,26 +21,27 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Executes {@code go test} for benchmark workspaces that generate Go code.
+ * Runs {@code go test} for benchmark workspaces using {@link ProcessBuilder}.
  *
- * <p>The executor drains stdout and stderr concurrently with bounded buffers so
- * that large test outputs do not block the subprocess. It initializes a Go module
+ * <p>This adapter keeps all external-process machinery out of the application
+ * layer. It drains stdout and stderr concurrently with bounded buffers so that
+ * large test outputs do not block the subprocess. It initializes a Go module
  * only when {@code go.mod} is absent, then runs {@code go test ./...}.</p>
  */
-public class GoTestExecutor {
+public class ProcessBuilderValidationCommandRunner implements ValidationCommandRunnerPort {
 
-    private static final Logger log = LoggerFactory.getLogger(GoTestExecutor.class);
+    private static final Logger log = LoggerFactory.getLogger(ProcessBuilderValidationCommandRunner.class);
     private static final int DEFAULT_TIMEOUT_SECONDS = 60;
     private static final int DEFAULT_MAX_OUTPUT_CHARS = 50_000;
 
     private final int timeoutSeconds;
     private final int maxOutputChars;
 
-    public GoTestExecutor() {
+    public ProcessBuilderValidationCommandRunner() {
         this(DEFAULT_TIMEOUT_SECONDS, DEFAULT_MAX_OUTPUT_CHARS);
     }
 
-    public GoTestExecutor(int timeoutSeconds, int maxOutputChars) {
+    public ProcessBuilderValidationCommandRunner(int timeoutSeconds, int maxOutputChars) {
         this.timeoutSeconds = DomainGuards.requirePositive(timeoutSeconds, "timeoutSeconds");
         this.maxOutputChars = DomainGuards.requirePositive(maxOutputChars, "maxOutputChars");
     }
@@ -46,12 +50,13 @@ public class GoTestExecutor {
      * Runs {@code go test ./...} in the given workspace.
      *
      * <p>If Go is not installed the result is a skip. If {@code go.mod} is missing
-     * the executor first runs {@code go mod init bench}. Timeouts and non-zero exit
+     * the runner first runs {@code go mod init bench}. Timeouts and non-zero exit
      * codes are reported as failures with captured output.</p>
      *
      * @param workspace the workspace directory containing the Go source files
      * @return the go-test result
      */
+    @Override
     public GoTestResult runGoTest(Path workspace) {
         DomainGuards.requireNonNull(workspace, "workspace");
 

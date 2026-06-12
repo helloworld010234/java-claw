@@ -2,20 +2,27 @@ package com.tinyclaw.adapters.cli;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import com.tinyclaw.adapters.benchmark.NoOpValidationCommandRunner;
 import com.tinyclaw.adapters.reporter.NoOpReporter;
 import com.tinyclaw.adapters.session.InMemorySessionService;
 import com.tinyclaw.adapters.tools.command.ShellCommandTool;
 import com.tinyclaw.adapters.tools.filesystem.EditFileTool;
 import com.tinyclaw.adapters.tools.filesystem.ReadFileTool;
 import com.tinyclaw.adapters.tools.filesystem.WriteFileTool;
+import com.tinyclaw.application.benchmark.BenchmarkSuite;
+import com.tinyclaw.application.benchmark.FakeValidationCommandRunner;
 import com.tinyclaw.application.engine.AgentEngine;
 import com.tinyclaw.application.engine.PromptComposer;
 import com.tinyclaw.application.run.AgentRunExecutionService;
+import com.tinyclaw.application.tool.ToolRegistry;
 import com.tinyclaw.config.AgentProperties;
 import com.tinyclaw.config.TinyClawModelProperties;
+import com.tinyclaw.ports.benchmark.GoTestResult;
+import com.tinyclaw.ports.benchmark.GoTestStatus;
+import com.tinyclaw.ports.benchmark.ValidationCommandRunnerPort;
 import com.tinyclaw.ports.llm.LlmGateway;
-import com.tinyclaw.ports.llm.LlmRequest;
 import com.tinyclaw.ports.llm.LlmResponse;
+import com.tinyclaw.ports.tool.AgentTool;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -43,7 +50,7 @@ class BenchmarkCommandTest {
 
     @BeforeEach
     void setUp() {
-        List tools = List.of(
+        List<AgentTool> tools = List.of(
             new ReadFileTool(),
             new WriteFileTool(),
             new EditFileTool(),
@@ -53,7 +60,7 @@ class BenchmarkCommandTest {
         InMemorySessionService sessionService = new InMemorySessionService();
         AgentEngine agentEngine = new AgentEngine(
             dummyLlm,
-            new com.tinyclaw.application.tool.ToolRegistry(tools),
+            new ToolRegistry(tools),
             new PromptComposer(),
             new NoOpReporter(),
             sessionService
@@ -66,7 +73,8 @@ class BenchmarkCommandTest {
             null,
             tools,
             new com.tinyclaw.adapters.observability.AgentMetrics(new SimpleMeterRegistry()),
-            Optional.empty()
+            Optional.empty(),
+            new NoOpValidationCommandRunner()
         );
         out = new ByteArrayOutputStream();
         err = new ByteArrayOutputStream();
@@ -161,7 +169,7 @@ class BenchmarkCommandTest {
     void benchRealDisabledReturnsTwo() {
         TinyClawModelProperties properties = new TinyClawModelProperties();
         properties.setEnabled(false);
-        BenchmarkCommand realCommand = createCommandWithProperties(properties, Optional.empty());
+        BenchmarkCommand realCommand = createCommandWithProperties(properties, Optional.empty(), new NoOpValidationCommandRunner());
 
         int exitCode = new CommandLine(realCommand).execute(
             "--engine", "real",
@@ -178,7 +186,7 @@ class BenchmarkCommandTest {
         TinyClawModelProperties properties = new TinyClawModelProperties();
         properties.setEnabled(true);
         properties.setApiKey("");
-        BenchmarkCommand realCommand = createCommandWithProperties(properties, Optional.empty());
+        BenchmarkCommand realCommand = createCommandWithProperties(properties, Optional.empty(), new NoOpValidationCommandRunner());
 
         int exitCode = new CommandLine(realCommand).execute(
             "--engine", "real",
@@ -200,7 +208,7 @@ class BenchmarkCommandTest {
         TinyClawModelProperties properties = new TinyClawModelProperties();
         properties.setEnabled(true);
         properties.setApiKey("sk-test");
-        BenchmarkCommand realCommand = createCommandWithProperties(properties, Optional.of(realGateway));
+        BenchmarkCommand realCommand = createCommandWithProperties(properties, Optional.of(realGateway), new NoOpValidationCommandRunner());
 
         int exitCode = new CommandLine(realCommand).execute(
             "--engine", "real",
@@ -223,7 +231,7 @@ class BenchmarkCommandTest {
         TinyClawModelProperties properties = new TinyClawModelProperties();
         properties.setEnabled(true);
         properties.setApiKey("sk-test");
-        BenchmarkCommand fakeCommand = createCommandWithProperties(properties, Optional.of(realGateway));
+        BenchmarkCommand fakeCommand = createCommandWithProperties(properties, Optional.of(realGateway), new NoOpValidationCommandRunner());
 
         int exitCode = new CommandLine(fakeCommand).execute(
             "--engine", "fake",
@@ -236,9 +244,86 @@ class BenchmarkCommandTest {
         assertThat(exitCode).isZero();
     }
 
+    @Test
+    void benchGoTestSkippedIsReportedWithoutFailing() {
+        ValidationCommandRunnerPort runner = FakeValidationCommandRunner.skipped("Go not installed");
+        BenchmarkCommand cmd = createCommandWithProperties(new TinyClawModelProperties(), Optional.empty(), runner);
+
+        int exitCode = new CommandLine(cmd).execute(
+            "--engine", "fake",
+            "--go-test",
+            "--workspace-root", tempDir.resolve("workspaces").toString()
+        );
+        restoreStreams();
+
+        assertThat(exitCode).isZero();
+        String output = out.toString();
+        assertThat(output).contains("case: test_002_code_gen");
+        assertThat(output).contains("Skipped: Go not installed");
+    }
+
+    @Test
+    void benchGoTestPassedIsReported() {
+        ValidationCommandRunnerPort runner = FakeValidationCommandRunner.passed("ok\n");
+        BenchmarkCommand cmd = createCommandWithProperties(new TinyClawModelProperties(), Optional.empty(), runner);
+
+        int exitCode = new CommandLine(cmd).execute(
+            "--engine", "fake",
+            "--go-test",
+            "--workspace-root", tempDir.resolve("workspaces").toString()
+        );
+        restoreStreams();
+
+        assertThat(exitCode).isZero();
+        String output = out.toString();
+        assertThat(output).contains("case: test_002_code_gen");
+        assertThat(output).contains("goTestOutput: |");
+        assertThat(output).contains("ok");
+    }
+
+    @Test
+    void benchGoTestFailedFailsTheCase() {
+        ValidationCommandRunnerPort runner = FakeValidationCommandRunner.failed("exit code 1", "--- FAIL: TestMultiply");
+        BenchmarkCommand cmd = createCommandWithProperties(new TinyClawModelProperties(), Optional.empty(), runner);
+
+        int exitCode = new CommandLine(cmd).execute(
+            "--engine", "fake",
+            "--go-test",
+            "--workspace-root", tempDir.resolve("workspaces").toString()
+        );
+        restoreStreams();
+
+        assertThat(exitCode).isEqualTo(1);
+        String output = out.toString();
+        assertThat(output).contains("case: test_002_code_gen");
+        assertThat(output).contains("status: FAILED");
+        assertThat(output).contains("error: exit code 1");
+        assertThat(output).contains("--- FAIL: TestMultiply");
+    }
+
+    @Test
+    void benchGoTestLongOutputIsTruncatedInCli() {
+        String longOutput = "line\n".repeat(20);
+        ValidationCommandRunnerPort runner = FakeValidationCommandRunner.passed(longOutput);
+        BenchmarkCommand cmd = createCommandWithProperties(new TinyClawModelProperties(), Optional.empty(), runner);
+
+        int exitCode = new CommandLine(cmd).execute(
+            "--engine", "fake",
+            "--go-test",
+            "--workspace-root", tempDir.resolve("workspaces").toString()
+        );
+        restoreStreams();
+
+        assertThat(exitCode).isZero();
+        String output = out.toString();
+        assertThat(output).contains("goTestOutput: |");
+        assertThat(output).contains("(15 more lines)");
+    }
+
     private BenchmarkCommand createCommandWithProperties(TinyClawModelProperties properties,
-                                                         Optional<LlmGateway> realGateway) {
-        List tools = List.of(
+                                                         Optional<LlmGateway> realGateway,
+                                                         ValidationCommandRunnerPort runner) {
+        List<AgentTool> tools = List.of(
             new ReadFileTool(),
             new WriteFileTool(),
             new EditFileTool(),
@@ -248,7 +333,7 @@ class BenchmarkCommandTest {
         InMemorySessionService sessionService = new InMemorySessionService();
         AgentEngine agentEngine = new AgentEngine(
             dummyLlm,
-            new com.tinyclaw.application.tool.ToolRegistry(tools),
+            new ToolRegistry(tools),
             new PromptComposer(),
             new NoOpReporter(),
             sessionService
@@ -261,7 +346,8 @@ class BenchmarkCommandTest {
             null,
             tools,
             new com.tinyclaw.adapters.observability.AgentMetrics(new SimpleMeterRegistry()),
-            realGateway
+            realGateway,
+            runner
         );
     }
 }

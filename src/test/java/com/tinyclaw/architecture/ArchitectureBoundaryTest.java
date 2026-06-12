@@ -38,6 +38,17 @@ class ArchitectureBoundaryTest {
     }
 
     @Test
+    void applicationLayerDoesNotDirectlyUseProcessBuilder() throws IOException {
+        Path applicationDir = SRC_MAIN.resolve("application");
+        assertThat(applicationDir).exists();
+
+        List<String> violations = scanForForbiddenReference(applicationDir, "ProcessBuilder");
+        assertThat(violations)
+            .withFailMessage("Application layer must not create external processes directly:%n%s", String.join("%n", violations))
+            .isEmpty();
+    }
+
+    @Test
     void domainLayerDoesNotDependOnSpringConfigAdaptersOrApplication() throws IOException {
         Path domainDir = SRC_MAIN.resolve("domain");
         assertThat(domainDir).exists();

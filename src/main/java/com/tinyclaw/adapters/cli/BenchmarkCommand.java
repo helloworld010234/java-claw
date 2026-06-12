@@ -1,13 +1,12 @@
 package com.tinyclaw.adapters.cli;
 
 import com.tinyclaw.adapters.benchmark.BenchmarkFakeLlmFactory;
+import com.tinyclaw.adapters.benchmark.NoOpValidationCommandRunner;
 import com.tinyclaw.application.benchmark.BenchmarkCase;
 import com.tinyclaw.application.benchmark.BenchmarkResult;
 import com.tinyclaw.application.benchmark.BenchmarkRunner;
 import com.tinyclaw.application.benchmark.BenchmarkStatus;
 import com.tinyclaw.application.benchmark.BenchmarkSuite;
-import com.tinyclaw.application.benchmark.GoTestExecutor;
-import com.tinyclaw.application.benchmark.GoTestResult;
 import com.tinyclaw.application.engine.AgentEngine;
 import com.tinyclaw.application.run.AgentRunExecutionService;
 import com.tinyclaw.application.tool.AllowAllPolicy;
@@ -15,10 +14,13 @@ import com.tinyclaw.application.tool.ToolRegistry;
 import com.tinyclaw.config.AgentProperties;
 import com.tinyclaw.config.TinyClawModelProperties;
 import com.tinyclaw.domain.common.DomainGuards;
+import com.tinyclaw.ports.benchmark.GoTestResult;
+import com.tinyclaw.ports.benchmark.ValidationCommandRunnerPort;
 import com.tinyclaw.ports.llm.LlmGateway;
 import com.tinyclaw.ports.observability.AgentMetricsPort;
 import com.tinyclaw.ports.persistence.ToolExecutionRepositoryPort;
 import com.tinyclaw.ports.tool.AgentTool;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Scope;
 import org.springframework.stereotype.Component;
 import picocli.CommandLine;
@@ -47,6 +49,8 @@ public class BenchmarkCommand implements Callable<Integer> {
 
     private static final String FAKE_ENGINE_TYPE = "benchmark-fake";
     private static final String REAL_ENGINE_TYPE = "benchmark-real";
+    private static final int MAX_OUTPUT_PREVIEW_LINES = 5;
+    private static final int MAX_OUTPUT_PREVIEW_LINE_LENGTH = 120;
 
     private final AgentRunExecutionService runExecutionService;
     private final AgentEngine agentEngine;
@@ -56,6 +60,7 @@ public class BenchmarkCommand implements Callable<Integer> {
     private final List<AgentTool> tools;
     private final AgentMetricsPort agentMetrics;
     private final Optional<LlmGateway> realLlmGateway;
+    private final ValidationCommandRunnerPort goTestRunner;
 
     public BenchmarkCommand(AgentRunExecutionService runExecutionService,
                             AgentEngine agentEngine,
@@ -65,10 +70,10 @@ public class BenchmarkCommand implements Callable<Integer> {
                             List<AgentTool> tools,
                             AgentMetricsPort agentMetrics) {
         this(runExecutionService, agentEngine, agentProperties, modelProperties,
-            toolExecutionRepository, tools, agentMetrics, Optional.empty());
+            toolExecutionRepository, tools, agentMetrics, Optional.empty(),
+            new NoOpValidationCommandRunner());
     }
 
-    @org.springframework.beans.factory.annotation.Autowired
     public BenchmarkCommand(AgentRunExecutionService runExecutionService,
                             AgentEngine agentEngine,
                             AgentProperties agentProperties,
@@ -77,6 +82,21 @@ public class BenchmarkCommand implements Callable<Integer> {
                             List<AgentTool> tools,
                             AgentMetricsPort agentMetrics,
                             Optional<LlmGateway> realLlmGateway) {
+        this(runExecutionService, agentEngine, agentProperties, modelProperties,
+            toolExecutionRepository, tools, agentMetrics, realLlmGateway,
+            new NoOpValidationCommandRunner());
+    }
+
+    @Autowired
+    public BenchmarkCommand(AgentRunExecutionService runExecutionService,
+                            AgentEngine agentEngine,
+                            AgentProperties agentProperties,
+                            TinyClawModelProperties modelProperties,
+                            ToolExecutionRepositoryPort toolExecutionRepository,
+                            List<AgentTool> tools,
+                            AgentMetricsPort agentMetrics,
+                            Optional<LlmGateway> realLlmGateway,
+                            ValidationCommandRunnerPort goTestRunner) {
         this.runExecutionService = DomainGuards.requireNonNull(runExecutionService, "runExecutionService");
         this.agentEngine = DomainGuards.requireNonNull(agentEngine, "agentEngine");
         this.agentProperties = agentProperties != null ? agentProperties : new AgentProperties();
@@ -85,6 +105,7 @@ public class BenchmarkCommand implements Callable<Integer> {
         this.tools = DomainGuards.requireNonNull(tools, "tools");
         this.agentMetrics = agentMetrics;
         this.realLlmGateway = realLlmGateway != null ? realLlmGateway : Optional.empty();
+        this.goTestRunner = goTestRunner != null ? goTestRunner : new NoOpValidationCommandRunner();
     }
 
     @CommandLine.Option(names = {"--engine"}, description = "Engine: fake (default) or real")
@@ -140,7 +161,6 @@ public class BenchmarkCommand implements Callable<Integer> {
         BenchmarkRunner runner = new BenchmarkRunner(
             runExecutionService, benchmarkEngine, agentProperties.getMaxTurns(), toolExecutionRepository
         );
-        GoTestExecutor goTestExecutor = new GoTestExecutor();
 
         String engineType = realMode ? REAL_ENGINE_TYPE : FAKE_ENGINE_TYPE;
         LlmGateway llmGateway = realMode ? realLlmGateway.get() : null;
@@ -152,7 +172,7 @@ public class BenchmarkCommand implements Callable<Integer> {
             BenchmarkResult result = runner.run(benchmarkCase, baseWorkspace, caseGateway, engineType);
 
             if (goTest && result.passed() && BenchmarkSuite.WRITE_TEST_CASE_ID.equals(result.caseId())) {
-                result = runGoTestIfAvailable(result, goTestExecutor);
+                result = runGoTestIfAvailable(result);
             }
 
             results.add(result);
@@ -176,8 +196,8 @@ public class BenchmarkCommand implements Callable<Integer> {
             .toList();
     }
 
-    private BenchmarkResult runGoTestIfAvailable(BenchmarkResult result, GoTestExecutor executor) {
-        GoTestResult goResult = executor.runGoTest(result.workspace());
+    private BenchmarkResult runGoTestIfAvailable(BenchmarkResult result) {
+        GoTestResult goResult = goTestRunner.runGoTest(result.workspace());
         if (goResult.skipped()) {
             return new BenchmarkResult(
                 result.caseId(),
@@ -234,17 +254,32 @@ public class BenchmarkCommand implements Callable<Integer> {
             System.out.println("  durationMs: " + result.durationMillis());
         }
         if (result.errorReason() != null) {
-            System.out.println("  error: " + result.errorReason());
+            System.out.println("  error: " + truncateLine(result.errorReason()));
+        }
+        if (result.validationOutput() != null) {
+            System.out.println("  validationOutput: " + truncateLine(result.validationOutput()));
         }
         if (result.goTestOutput() != null) {
             System.out.println("  goTestOutput: |");
-            for (String line : result.goTestOutput().split("\r?\n", 6)) {
-                System.out.println("    " + line);
+            String[] lines = result.goTestOutput().split("\r?\n");
+            int previewLines = Math.min(lines.length, MAX_OUTPUT_PREVIEW_LINES);
+            for (int i = 0; i < previewLines; i++) {
+                System.out.println("    " + truncateLine(lines[i]));
             }
-            if (result.goTestOutput().split("\r?\n").length > 5) {
-                System.out.println("    ...");
+            if (lines.length > MAX_OUTPUT_PREVIEW_LINES) {
+                System.out.println("    ... (" + (lines.length - MAX_OUTPUT_PREVIEW_LINES) + " more lines)");
             }
         }
+    }
+
+    private String truncateLine(String line) {
+        if (line == null) {
+            return "";
+        }
+        if (line.length() <= MAX_OUTPUT_PREVIEW_LINE_LENGTH) {
+            return line;
+        }
+        return line.substring(0, MAX_OUTPUT_PREVIEW_LINE_LENGTH) + "...";
     }
 
     private void printSummary(List<BenchmarkResult> results, boolean anyFailed) {

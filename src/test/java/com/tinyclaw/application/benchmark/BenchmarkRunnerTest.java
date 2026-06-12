@@ -16,9 +16,13 @@ import com.tinyclaw.application.tool.ToolRegistry;
 import com.tinyclaw.domain.message.Message;
 import com.tinyclaw.domain.message.Role;
 import com.tinyclaw.domain.message.Usage;
+import com.tinyclaw.domain.run.AgentRun;
+import com.tinyclaw.domain.session.Session;
 import com.tinyclaw.ports.llm.LlmGateway;
 import com.tinyclaw.ports.llm.LlmRequest;
 import com.tinyclaw.ports.llm.LlmResponse;
+import com.tinyclaw.ports.persistence.AgentRunSummary;
+import com.tinyclaw.ports.persistence.RunRepositoryPort;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -26,7 +30,11 @@ import org.junit.jupiter.api.io.TempDir;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -118,7 +126,7 @@ class BenchmarkRunnerTest {
     }
 
     @Test
-    void engineTypeIsPersisted() {
+    void engineTypeIsPersistedToRunRepository() {
         BenchmarkCase caseDef = BenchmarkSuite.editConfigCase();
         com.tinyclaw.adapters.llm.fake.FakeLlmGateway fakeGateway = BenchmarkFakeLlmFactory.forCase(caseDef);
         LlmGateway trackingGateway = request -> {
@@ -126,9 +134,43 @@ class BenchmarkRunnerTest {
             return fakeGateway.generate(request);
         };
 
-        BenchmarkResult result = runner.run(caseDef, tempDir, trackingGateway, "custom-engine");
+        AtomicReference<String> persistedEngineType = new AtomicReference<>();
+        RunRepositoryPort recordingRepository = new RunRepositoryPort() {
+            @Override
+            public void saveSession(Session session) { }
+
+            @Override
+            public Optional<Session> findSessionById(String sessionId) { return Optional.empty(); }
+
+            @Override
+            public void saveRunStarted(AgentRun run, String mode, String prompt) {
+                persistedEngineType.set(mode);
+            }
+
+            @Override
+            public void saveRunCompleted(AgentRun run) { }
+
+            @Override
+            public void saveRunCompleted(String runId, int turnCount, Instant completedAt) { }
+
+            @Override
+            public void saveRunFailed(AgentRun run, String reason) { }
+
+            @Override
+            public void saveRunFailed(String runId, int turnCount, String reason, Instant completedAt) { }
+
+            @Override
+            public Optional<AgentRunSummary> findById(String runId) { return Optional.empty(); }
+        };
+        AgentRunExecutionService executionService = new AgentRunExecutionService(
+            recordingRepository, null, sessionService, new ObjectMapper(), new NoOpReporter()
+        );
+        BenchmarkRunner typedRunner = new BenchmarkRunner(executionService, createEngine(), 20);
+
+        BenchmarkResult result = typedRunner.run(caseDef, tempDir, trackingGateway, "custom-engine");
 
         assertThat(result.passed()).isTrue();
+        assertThat(persistedEngineType.get()).isEqualTo("custom-engine");
     }
 
     @Test
@@ -149,5 +191,76 @@ class BenchmarkRunnerTest {
         assertThat(result.usage()).isNotNull();
         assertThat(result.usage().promptTokens()).isPositive();
         assertThat(result.usage().completionTokens()).isPositive();
+    }
+
+    @Test
+    void agentRunFailureRetainsTurnCountAndUsage() {
+        BenchmarkCase caseDef = BenchmarkSuite.editConfigCase();
+        AgentRunExecutionService failingService = new AgentRunExecutionService(
+            null, null, sessionService, new ObjectMapper(), new NoOpReporter()
+        ) {
+            @Override
+            public AgentRunResult execute(String runId, Session session, String prompt,
+                                          com.tinyclaw.ports.tool.ToolExecutionContext context,
+                                          AgentEngine engine, String engineType,
+                                          com.tinyclaw.ports.persistence.ToolExecutionRepositoryPort toolRepo,
+                                          int maxTurns) {
+                return new AgentRunResult(false, "boom", 7, "forced failure", new Usage(12, 8));
+            }
+        };
+        BenchmarkRunner failingRunner = new BenchmarkRunner(failingService, createEngine(), 20);
+
+        BenchmarkResult result = failingRunner.run(caseDef, tempDir, request -> new LlmResponse("", List.of(), null));
+
+        assertThat(result.passed()).isFalse();
+        assertThat(result.turnCount()).isEqualTo(7);
+        assertThat(result.usage()).isNotNull();
+        assertThat(result.usage().promptTokens()).isEqualTo(12);
+        assertThat(result.usage().completionTokens()).isEqualTo(8);
+        assertThat(result.errorReason()).contains("forced failure");
+    }
+
+    @Test
+    void validationFailureRetainsTurnCountAndUsage() {
+        BenchmarkCase caseDef = new BenchmarkCase(
+            "validation-fails",
+            "Validation fails",
+            "prompt",
+            workspace -> { },
+            workspace -> {
+                throw new RuntimeException("validation boom");
+            }
+        );
+        AgentRunExecutionService successService = new AgentRunExecutionService(
+            null, null, sessionService, new ObjectMapper(), new NoOpReporter()
+        ) {
+            @Override
+            public AgentRunResult execute(String runId, Session session, String prompt,
+                                          com.tinyclaw.ports.tool.ToolExecutionContext context,
+                                          AgentEngine engine, String engineType,
+                                          com.tinyclaw.ports.persistence.ToolExecutionRepositoryPort toolRepo,
+                                          int maxTurns) {
+                return new AgentRunResult(true, "ok", 4, null, new Usage(5, 6));
+            }
+        };
+        BenchmarkRunner successRunner = new BenchmarkRunner(successService, createEngine(), 20);
+
+        BenchmarkResult result = successRunner.run(caseDef, tempDir, request -> new LlmResponse("", List.of(), null));
+
+        assertThat(result.passed()).isFalse();
+        assertThat(result.turnCount()).isEqualTo(4);
+        assertThat(result.usage()).isNotNull();
+        assertThat(result.usage().promptTokens()).isEqualTo(5);
+        assertThat(result.usage().completionTokens()).isEqualTo(6);
+        assertThat(result.errorReason()).contains("validation boom");
+    }
+
+    private AgentEngine createEngine() {
+        ToolRegistry registry = new ToolRegistry(
+            List.of(new ReadFileTool(), new WriteFileTool(), new EditFileTool()),
+            List.of(new AllowAllPolicy())
+        );
+        LlmGateway dummyLlm = request -> new LlmResponse("", List.of(), null);
+        return new AgentEngine(dummyLlm, registry, new PromptComposer(), new NoOpReporter(), sessionService);
     }
 }

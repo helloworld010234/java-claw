@@ -89,7 +89,7 @@ public class BenchmarkRunner {
         } catch (Exception e) {
             log.warn("Benchmark case {} setup failed: {}", benchmarkCase.id(), e.getMessage());
             return failedResult(benchmarkCase.id(), workspace, startedAt,
-                "Setup failed: " + e.getMessage(), null, null);
+                "Setup failed: " + e.getMessage(), null, null, 0, null);
         }
 
         Session session = Session.create(sessionId, workspace.toAbsolutePath().toString(), Instant.now());
@@ -111,13 +111,13 @@ public class BenchmarkRunner {
         } catch (Exception e) {
             log.warn("Benchmark case {} execution failed: {}", benchmarkCase.id(), e.getMessage());
             return failedResult(benchmarkCase.id(), workspace, startedAt,
-                "Execution failed: " + e.getMessage(), runId, sessionId);
+                "Execution failed: " + e.getMessage(), runId, sessionId, 0, null);
         }
 
         if (!result.success()) {
             return failedResult(benchmarkCase.id(), workspace, startedAt,
                 result.errorReason() != null ? result.errorReason() : "Agent run failed",
-                runId, sessionId, result.totalUsage());
+                runId, sessionId, result.turnCount(), result.totalUsage());
         }
 
         String validationOutput;
@@ -127,7 +127,8 @@ public class BenchmarkRunner {
         } catch (Exception e) {
             log.warn("Benchmark case {} validation failed: {}", benchmarkCase.id(), e.getMessage());
             return failedResult(benchmarkCase.id(), workspace, startedAt,
-                "Validation failed: " + e.getMessage(), runId, sessionId, result.totalUsage());
+                "Validation failed: " + e.getMessage(), runId, sessionId,
+                result.turnCount(), result.totalUsage());
         }
 
         long durationMillis = System.currentTimeMillis() - startedAt;
@@ -151,16 +152,8 @@ public class BenchmarkRunner {
                                          long startedAt,
                                          String errorReason,
                                          String runId,
-                                         String sessionId) {
-        return failedResult(caseId, workspace, startedAt, errorReason, runId, sessionId, null);
-    }
-
-    private BenchmarkResult failedResult(String caseId,
-                                         Path workspace,
-                                         long startedAt,
-                                         String errorReason,
-                                         String runId,
                                          String sessionId,
+                                         int turnCount,
                                          Usage usage) {
         long durationMillis = System.currentTimeMillis() - startedAt;
         return new BenchmarkResult(
@@ -169,7 +162,7 @@ public class BenchmarkRunner {
             runId,
             sessionId,
             workspace,
-            0,
+            turnCount,
             errorReason,
             durationMillis,
             usage,
