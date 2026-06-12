@@ -7,6 +7,52 @@ import static org.assertj.core.api.Assertions.assertThat;
 class ChatOpsSanitizerTest {
 
     @Test
+    void masksApiKeyWithTab() {
+        String input = "api_key:\tsk-secret";
+        assertThat(ChatOpsSanitizer.sanitize(input)).isEqualTo("api_key:\t***");
+    }
+
+    @Test
+    void masksApiKeyWithNewline() {
+        String input = "\"access_token\"\n:\n\"tok-secret\"";
+        assertThat(ChatOpsSanitizer.sanitize(input)).isEqualTo("\"access_token\"\n:\n\"***\"");
+    }
+
+    @Test
+    void masksApiKeyWithMultipleSpaces() {
+        String input = "\"api_key\"   :   \"sk-secret\"";
+        assertThat(ChatOpsSanitizer.sanitize(input)).isEqualTo("\"api_key\"   :   \"***\"");
+    }
+
+    @Test
+    void masksFormattedJson() {
+        String input = "{\n  \"api_key\" : \"sk-secret\"\n}";
+        assertThat(ChatOpsSanitizer.sanitize(input)).isEqualTo("{\n  \"api_key\" : \"***\"\n}");
+    }
+
+    @Test
+    void masksAuthorizationWithTab() {
+        String input = "Authorization:\tBearer token-secret";
+        assertThat(ChatOpsSanitizer.sanitize(input)).isEqualTo("Authorization:\tBearer ***");
+    }
+
+    @Test
+    void masksPasswordWithNaturalLanguage() {
+        String input = "password is super-secret";
+        assertThat(ChatOpsSanitizer.sanitize(input)).isEqualTo("password is ***");
+    }
+
+    @Test
+    void masksMultipleSecretsWithWhitespaceVariants() {
+        String input = "api_key=sk-1\npassword:\tpwd-2\nAuthorization: Bearer tok-3";
+        String sanitized = ChatOpsSanitizer.sanitize(input);
+        assertThat(sanitized).doesNotContain("sk-1", "pwd-2", "tok-3");
+        assertThat(sanitized).contains("api_key=***");
+        assertThat(sanitized).contains("password:\t***");
+        assertThat(sanitized).contains("Authorization: Bearer ***");
+    }
+
+    @Test
     void nullReturnsEmpty() {
         assertThat(ChatOpsSanitizer.sanitize(null)).isEmpty();
     }

@@ -5,15 +5,23 @@ import com.tinyclaw.adapters.llm.fake.FakeLlmGateway;
 import com.tinyclaw.adapters.reporter.NoOpReporter;
 import com.tinyclaw.adapters.session.InMemorySessionService;
 import com.tinyclaw.application.engine.AgentEngine;
+import com.tinyclaw.application.engine.AgentRunResult;
 import com.tinyclaw.application.engine.PromptComposer;
 import com.tinyclaw.application.run.AgentRunExecutionService;
 import com.tinyclaw.application.tool.ToolRegistry;
+import com.tinyclaw.domain.session.Session;
 import com.tinyclaw.ports.chatops.ChatOpsEvent;
 import com.tinyclaw.ports.chatops.FakeChatOpsMessageSender;
 import com.tinyclaw.ports.llm.LlmResponse;
+import com.tinyclaw.ports.persistence.ToolExecutionRepositoryPort;
 import com.tinyclaw.ports.session.SessionService;
+import com.tinyclaw.ports.tool.ToolExecutionContext;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 
 import java.nio.file.Path;
 import java.time.Instant;
@@ -333,5 +341,89 @@ class ChatOpsEventHandlerTest {
         // The outbound message must not contain the raw secret
         assertThat(countingSender.getMessages()).allMatch(m -> !m.text().contains("sk-live-12345"));
         assertThat(countingSender.getMessages()).anyMatch(m -> m.text().contains("***"));
+    }
+
+    @Test
+    void failedRunWithSecretDoesNotLeakInLogsOrMessages() throws InterruptedException {
+        CountDownLatch latch = new CountDownLatch(1);
+        FakeChatOpsMessageSender countingSender = new FakeChatOpsMessageSender() {
+            @Override
+            public void sendMessage(String chatId, com.tinyclaw.ports.chatops.ChatOpsOutboundMessage message) {
+                super.sendMessage(chatId, message);
+                if (message.type() == com.tinyclaw.ports.chatops.ChatOpsOutboundMessage.Type.RUN_COMPLETED
+                    || message.type() == com.tinyclaw.ports.chatops.ChatOpsOutboundMessage.Type.RUN_FAILED) {
+                    latch.countDown();
+                }
+            }
+        };
+
+        // Capture logs from ChatOpsEventHandler
+        Logger handlerLogger = (Logger) LoggerFactory.getLogger(ChatOpsEventHandler.class);
+        ListAppender<ILoggingEvent> logAppender = new ListAppender<>();
+        logAppender.start();
+        handlerLogger.addAppender(logAppender);
+
+        try {
+            // Engine that throws an exception with a secret in the message
+            AgentEngine failingEngine = new AgentEngine(
+                new FakeLlmGateway(req -> {
+                    throw new com.tinyclaw.ports.llm.LlmException("api_key=sk-secret-123 failed");
+                }),
+                new ToolRegistry(List.of()),
+                new PromptComposer(),
+                new NoOpReporter(),
+                sessionService
+            );
+
+            // Wrap executionService to force an unexpected throw (bypassing AgentEngine's internal catch)
+            AgentRunExecutionService throwingExecutionService = new AgentRunExecutionService(
+                null, null, sessionService, new ObjectMapper(), new NoOpReporter()
+            ) {
+                @Override
+                public AgentRunResult execute(String runId,
+                                               Session session,
+                                               String prompt,
+                                               ToolExecutionContext context,
+                                               AgentEngine engine,
+                                               String engineType,
+                                               com.tinyclaw.ports.persistence.ToolExecutionRepositoryPort toolExecutionRepository,
+                                               int maxTurns) {
+                    throw new RuntimeException("api_key=sk-secret-123 crashed");
+                }
+            };
+
+            ChatOpsEventHandler testHandler = new ChatOpsEventHandler(
+                throwingExecutionService, sessionService, countingSender, directExecutor,
+                Path.of("/tmp/chatops").toAbsolutePath(), 10,
+                failingEngine
+            );
+
+            ChatOpsEvent event = new ChatOpsEvent("evt-secret", "msg-secret", "chat-secret", "user-secret", "fail me", Instant.now(), ChatOpsEvent.Type.TEXT_MESSAGE);
+            testHandler.handle(event);
+            assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
+
+            // Poll until the ERROR log event appears (ArrayList visibility across threads)
+            List<String> logMessages = null;
+            for (int i = 0; i < 50; i++) {
+                logMessages = logAppender.list.stream()
+                    .map(ILoggingEvent::getFormattedMessage)
+                    .toList();
+                if (logMessages.stream().anyMatch(msg -> msg.contains("LlmException"))) {
+                    break;
+                }
+                Thread.sleep(50);
+            }
+
+            // Outbound message must not contain the raw secret
+            assertThat(countingSender.getMessages()).allMatch(m -> !m.text().contains("sk-secret-123"));
+            assertThat(countingSender.hasMessageContaining("Run failed")).isTrue();
+            assertThat(countingSender.getMessages()).anyMatch(m -> m.text().contains("***"));
+
+            // Logs must not contain the raw secret
+            assertThat(logMessages).noneMatch(msg -> msg.contains("sk-secret-123"));
+            assertThat(logMessages).anyMatch(msg -> msg.contains("***") && msg.contains("RuntimeException"));
+        } finally {
+            handlerLogger.detachAppender(logAppender);
+        }
     }
 }

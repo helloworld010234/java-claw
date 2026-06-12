@@ -24,15 +24,15 @@ public class ChatOpsSanitizer {
 
     private static final Pattern[] SENSITIVE_PATTERNS = {
         // JSON-style, assignment, or natural language: "api_key": "sk-xxx", api_key=sk-xxx, api_key is sk-xxx
-        Pattern.compile("(\"?(api[_-]?key|apikey)\"?\s*(?:[:=]|\s+is\s+)\s*\"?)([^\\s\"&,}\\]<>]{4,})", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("(\"?(api[_-]?key|apikey)\"?\\s*(?:[:=]|\\s+is\\s+)\\s*\"?)([^\\s\"&,}\\]<>]{4,})", Pattern.CASE_INSENSITIVE),
         // Authorization / Bearer header
-        Pattern.compile("((?i)Authorization\s*[:=]\s*(?i)Bearer\s+)([^\\s\"&,}\\]<>]{4,})", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("((?i)Authorization\\s*[:=]\\s*(?i)Bearer\\s+)([^\\s\"&,}\\]<>]{4,})", Pattern.CASE_INSENSITIVE),
         // token variants
-        Pattern.compile("(\"?(token|access_token|refresh_token)\"?\s*(?:[:=]|\s+is\s+)\s*\"?)([^\\s\"&,}\\]<>]{4,})", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("(\"?(token|access_token|refresh_token)\"?\\s*(?:[:=]|\\s+is\\s+)\\s*\"?)([^\\s\"&,}\\]<>]{4,})", Pattern.CASE_INSENSITIVE),
         // password variants
-        Pattern.compile("(\"?(password|passwd|pwd)\"?\s*(?:[:=]|\s+is\s+)\s*\"?)([^\\s\"&,}\\]<>]{4,})", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("(\"?(password|passwd|pwd)\"?\\s*(?:[:=]|\\s+is\\s+)\\s*\"?)([^\\s\"&,}\\]<>]{4,})", Pattern.CASE_INSENSITIVE),
         // secret variants
-        Pattern.compile("(\"?(secret|app_secret|client_secret)\"?\s*(?:[:=]|\s+is\s+)\s*\"?)([^\\s\"&,}\\]<>]{4,})", Pattern.CASE_INSENSITIVE),
+        Pattern.compile("(\"?(secret|app_secret|client_secret)\"?\\s*(?:[:=]|\\s+is\\s+)\\s*\"?)([^\\s\"&,}\\]<>]{4,})", Pattern.CASE_INSENSITIVE),
     };
 
     private static final String MASK = "***";

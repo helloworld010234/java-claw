@@ -121,9 +121,10 @@ public class ChatOpsEventHandler {
                 }
             } catch (Exception e) {
                 String safeReason = ChatOpsSanitizer.sanitize(e.getMessage());
-                log.error("[Run {}] ChatOps run failed: {}", runId, safeReason, e);
+                log.error("[Run {}] ChatOps run failed: type={}, message={}",
+                    runId, e.getClass().getSimpleName(), safeReason);
                 messageSender.sendMessage(event.chatId(),
-                    ChatOpsOutboundMessage.runFailed(runId, e.getMessage()));
+                    ChatOpsOutboundMessage.runFailed(runId, safeReason));
             }
         });
 
