@@ -81,7 +81,8 @@ public class FeishuWebhookController {
         }
 
         if (event.type() == ChatOpsEvent.Type.UNKNOWN) {
-            log.info("[FeishuWebhook] Ignoring unsupported event: {}", event.text());
+            log.info("[FeishuWebhook] Ignoring unsupported event: type={}, chatId={}",
+                event.type(), event.chatId());
             return ResponseEntity.ok(Map.of("status", "ignored"));
         }
 

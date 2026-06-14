@@ -21,6 +21,9 @@ class ChatOpsPropertiesTest {
         assertThat(properties.getEncryptKey()).isEmpty();
         assertThat(properties.getWorkspace()).isEqualTo("chatops-workspace");
         assertThat(properties.getAllowedChatIds()).isEmpty();
+        assertThat(properties.getBaseUrl()).isEqualTo("https://open.feishu.cn");
+        assertThat(properties.getRequestTimeoutSeconds()).isEqualTo(10);
+        assertThat(properties.getTokenRefreshSkewSeconds()).isEqualTo(300);
         assertThat(properties.isConfigured()).isFalse();
     }
 
@@ -34,6 +37,9 @@ class ChatOpsPropertiesTest {
         properties.setEncryptKey(null);
         properties.setWorkspace("   ");
         properties.setAllowedChatIds(null);
+        properties.setBaseUrl(null);
+        properties.setRequestTimeoutSeconds(-5);
+        properties.setTokenRefreshSkewSeconds(-1);
 
         assertThat(properties.getAppId()).isEmpty();
         assertThat(properties.getAppSecret()).isEmpty();
@@ -41,6 +47,9 @@ class ChatOpsPropertiesTest {
         assertThat(properties.getEncryptKey()).isEmpty();
         assertThat(properties.getWorkspace()).isEqualTo("chatops-workspace");
         assertThat(properties.getAllowedChatIds()).isEmpty();
+        assertThat(properties.getBaseUrl()).isEqualTo("https://open.feishu.cn");
+        assertThat(properties.getRequestTimeoutSeconds()).isEqualTo(10);
+        assertThat(properties.getTokenRefreshSkewSeconds()).isEqualTo(300);
     }
 
     @Test
@@ -50,10 +59,16 @@ class ChatOpsPropertiesTest {
         properties.setVerifyToken("verify-token");
         properties.setEncryptKey("encrypt-key");
         properties.setWorkspace("ops-workspace");
+        properties.setBaseUrl("https://open.feishu.cn/open-apis");
+        properties.setRequestTimeoutSeconds(30);
+        properties.setTokenRefreshSkewSeconds(60);
 
         assertThat(properties.getVerifyToken()).isEqualTo("verify-token");
         assertThat(properties.getEncryptKey()).isEqualTo("encrypt-key");
         assertThat(properties.getWorkspace()).isEqualTo("ops-workspace");
+        assertThat(properties.getBaseUrl()).isEqualTo("https://open.feishu.cn/open-apis");
+        assertThat(properties.getRequestTimeoutSeconds()).isEqualTo(30);
+        assertThat(properties.getTokenRefreshSkewSeconds()).isEqualTo(60);
     }
 
     @Test
@@ -82,5 +97,84 @@ class ChatOpsPropertiesTest {
         assertThat(properties.getAllowedChatIds()).containsExactly("chat-1", "chat-2");
         assertThatThrownBy(() -> properties.getAllowedChatIds().add("chat-4"))
             .isInstanceOf(UnsupportedOperationException.class);
+    }
+
+    @Test
+    void newPropertiesDoNotAffectConfiguredFlag() {
+        ChatOpsProperties properties = new ChatOpsProperties();
+
+        properties.setEnabled(true);
+        properties.setAppId("app");
+        properties.setAppSecret("secret");
+        assertThat(properties.isConfigured()).isTrue();
+
+        properties.setBaseUrl("   ");
+        properties.setRequestTimeoutSeconds(-1);
+        properties.setTokenRefreshSkewSeconds(-10);
+
+        assertThat(properties.isConfigured()).isTrue();
+    }
+
+    @Test
+    void requestTimeoutSecondsZeroFallsBackToDefault() {
+        ChatOpsProperties properties = new ChatOpsProperties();
+        properties.setRequestTimeoutSeconds(0);
+        assertThat(properties.getRequestTimeoutSeconds()).isEqualTo(ChatOpsProperties.DEFAULT_REQUEST_TIMEOUT_SECONDS);
+    }
+
+    @Test
+    void requestTimeoutSecondsNegativeFallsBackToDefault() {
+        ChatOpsProperties properties = new ChatOpsProperties();
+        properties.setRequestTimeoutSeconds(-10);
+        assertThat(properties.getRequestTimeoutSeconds()).isEqualTo(ChatOpsProperties.DEFAULT_REQUEST_TIMEOUT_SECONDS);
+    }
+
+    @Test
+    void validRequestTimeoutSecondsIsRetained() {
+        ChatOpsProperties properties = new ChatOpsProperties();
+        properties.setRequestTimeoutSeconds(45);
+        assertThat(properties.getRequestTimeoutSeconds()).isEqualTo(45);
+    }
+
+    @Test
+    void baseUrlWithTrailingSlashIsNormalized() {
+        ChatOpsProperties properties = new ChatOpsProperties();
+        properties.setBaseUrl("https://open.feishu.cn/");
+        assertThat(properties.getBaseUrl()).isEqualTo("https://open.feishu.cn");
+    }
+
+    @Test
+    void httpBaseUrlFallsBackToDefault() {
+        ChatOpsProperties properties = new ChatOpsProperties();
+        properties.setBaseUrl("http://open.feishu.cn");
+        assertThat(properties.getBaseUrl()).isEqualTo(ChatOpsProperties.DEFAULT_BASE_URL);
+    }
+
+    @Test
+    void nonAllowedHostFallsBackToDefault() {
+        ChatOpsProperties properties = new ChatOpsProperties();
+        properties.setBaseUrl("https://evil.example.com");
+        assertThat(properties.getBaseUrl()).isEqualTo(ChatOpsProperties.DEFAULT_BASE_URL);
+    }
+
+    @Test
+    void malformedBaseUrlFallsBackToDefault() {
+        ChatOpsProperties properties = new ChatOpsProperties();
+        properties.setBaseUrl("not-a-url");
+        assertThat(properties.getBaseUrl()).isEqualTo(ChatOpsProperties.DEFAULT_BASE_URL);
+    }
+
+    @Test
+    void blankBaseUrlFallsBackToDefault() {
+        ChatOpsProperties properties = new ChatOpsProperties();
+        properties.setBaseUrl("   ");
+        assertThat(properties.getBaseUrl()).isEqualTo(ChatOpsProperties.DEFAULT_BASE_URL);
+    }
+
+    @Test
+    void larkBaseUrlIsAllowed() {
+        ChatOpsProperties properties = new ChatOpsProperties();
+        properties.setBaseUrl("https://open.larksuite.com");
+        assertThat(properties.getBaseUrl()).isEqualTo("https://open.larksuite.com");
     }
 }

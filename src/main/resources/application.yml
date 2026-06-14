@@ -42,3 +42,8 @@ tiny-claw:
       - write_file
       - edit_file
       - shell_command
+  chatops:
+    enabled: false
+    base-url: https://open.feishu.cn
+    request-timeout-seconds: 10
+    token-refresh-skew-seconds: 300

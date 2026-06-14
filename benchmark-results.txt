@@ -1,0 +1,120 @@
+# JMH version: 1.37
+# VM version: JDK 21.0.9, OpenJDK 64-Bit Server VM, 21.0.9+1-b1163.86
+# VM invoker: E:\IntelliJ IDEA 2025.3.1\jbr\bin\java.exe
+# VM options: <none>
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 1 s each
+# Measurement: 5 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Throughput, ops/time
+# Benchmark: com.tinyclaw.benchmark.AgentContextBuilderBenchmark.buildContext
+
+# Run progress: 0.00% complete, ETA 00:00:24
+# Fork: 1 of 1
+# Warmup Iteration   1: Mockito is currently self-attaching to enable the inline-mock-maker. This will no longer work in future releases of the JDK. Please add Mockito as an agent to your build as described in Mockito's documentation: https://javadoc.io/doc/org.mockito/mockito-core/latest/org.mockito/org/mockito/Mockito.html#0.3
+WARNING: A Java agent has been loaded dynamically (D:\RelocatedFromC\Caches\maven-repository\net\bytebuddy\byte-buddy-agent\1.17.8\byte-buddy-agent-1.17.8.jar)
+WARNING: If a serviceability tool is in use, please run with -XX:+EnableDynamicAgentLoading to hide this warning
+WARNING: If a serviceability tool is not in use, please run with -Djdk.instrument.traceUsage for more information
+WARNING: Dynamic loading of agents will be disallowed by default in a future release
+OpenJDK 64-Bit Server VM warning: Sharing is only supported for boot loader classes because bootstrap classpath has been appended
+70.122 ops/ms
+# Warmup Iteration   2: 92.177 ops/ms
+# Warmup Iteration   3: 88.059 ops/ms
+Iteration   1: 101.227 ops/ms
+Iteration   2: 91.453 ops/ms
+Iteration   3: 104.883 ops/ms
+Iteration   4: 97.690 ops/ms
+Iteration   5: 100.596 ops/ms
+
+
+Result "com.tinyclaw.benchmark.AgentContextBuilderBenchmark.buildContext":
+  99.170 ±(99.9%) 19.315 ops/ms [Average]
+  (min, avg, max) = (91.453, 99.170, 104.883), stdev = 5.016
+  CI (99.9%): [79.854, 118.485] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 21.0.9, OpenJDK 64-Bit Server VM, 21.0.9+1-b1163.86
+# VM invoker: E:\IntelliJ IDEA 2025.3.1\jbr\bin\java.exe
+# VM options: <none>
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 1 s each
+# Measurement: 5 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Throughput, ops/time
+# Benchmark: com.tinyclaw.benchmark.PromptComposerBenchmark.composePrompt
+
+# Run progress: 33.33% complete, ETA 00:00:18
+# Fork: 1 of 1
+# Warmup Iteration   1: Mockito is currently self-attaching to enable the inline-mock-maker. This will no longer work in future releases of the JDK. Please add Mockito as an agent to your build as described in Mockito's documentation: https://javadoc.io/doc/org.mockito/mockito-core/latest/org.mockito/org/mockito/Mockito.html#0.3
+WARNING: A Java agent has been loaded dynamically (D:\RelocatedFromC\Caches\maven-repository\net\bytebuddy\byte-buddy-agent\1.17.8\byte-buddy-agent-1.17.8.jar)
+WARNING: If a serviceability tool is in use, please run with -XX:+EnableDynamicAgentLoading to hide this warning
+WARNING: If a serviceability tool is not in use, please run with -Djdk.instrument.traceUsage for more information
+WARNING: Dynamic loading of agents will be disallowed by default in a future release
+OpenJDK 64-Bit Server VM warning: Sharing is only supported for boot loader classes because bootstrap classpath has been appended
+83.166 ops/ms
+# Warmup Iteration   2: 99.820 ops/ms
+# Warmup Iteration   3: 103.790 ops/ms
+Iteration   1: 121.247 ops/ms
+Iteration   2: 99.479 ops/ms
+Iteration   3: 114.691 ops/ms
+Iteration   4: 112.690 ops/ms
+Iteration   5: 113.498 ops/ms
+
+
+Result "com.tinyclaw.benchmark.PromptComposerBenchmark.composePrompt":
+  112.321 ±(99.9%) 30.547 ops/ms [Average]
+  (min, avg, max) = (99.479, 112.321, 121.247), stdev = 7.933
+  CI (99.9%): [81.774, 142.868] (assumes normal distribution)
+
+
+# JMH version: 1.37
+# VM version: JDK 21.0.9, OpenJDK 64-Bit Server VM, 21.0.9+1-b1163.86
+# VM invoker: E:\IntelliJ IDEA 2025.3.1\jbr\bin\java.exe
+# VM options: <none>
+# Blackhole mode: compiler (auto-detected, use -Djmh.blackhole.autoDetect=false to disable)
+# Warmup: 3 iterations, 1 s each
+# Measurement: 5 iterations, 1 s each
+# Timeout: 10 min per iteration
+# Threads: 1 thread, will synchronize iterations
+# Benchmark mode: Throughput, ops/time
+# Benchmark: com.tinyclaw.benchmark.ToolRegistryBenchmark.executeTool
+
+# Run progress: 66.67% complete, ETA 00:00:09
+# Fork: 1 of 1
+# Warmup Iteration   1: 164166.632 ops/ms
+# Warmup Iteration   2: 191330.392 ops/ms
+# Warmup Iteration   3: 216243.179 ops/ms
+Iteration   1: 216063.722 ops/ms
+Iteration   2: 211430.976 ops/ms
+Iteration   3: 213711.737 ops/ms
+Iteration   4: 210871.247 ops/ms
+Iteration   5: 216241.677 ops/ms
+
+
+Result "com.tinyclaw.benchmark.ToolRegistryBenchmark.executeTool":
+  213663.872 ±(99.9%) 9663.358 ops/ms [Average]
+  (min, avg, max) = (210871.247, 213663.872, 216241.677), stdev = 2509.543
+  CI (99.9%): [204000.514, 223327.230] (assumes normal distribution)
+
+
+# Run complete. Total time: 00:00:27
+
+REMEMBER: The numbers below are just data. To gain reusable insights, you need to follow up on
+why the numbers are the way they are. Use profilers (see -prof, -lprof), design factorial
+experiments, perform baseline and negative tests that provide experimental control, make sure
+the benchmarking environment is safe on JVM/OS/HW level, ask for reviews from the domain experts.
+Do not assume the numbers tell you what you want them to tell.
+
+NOTE: Current JVM experimentally supports Compiler Blackholes, and they are in use. Please exercise
+extra caution when trusting the results, look into the generated code to check the benchmark still
+works, and factor in a small probability of new VM bugs. Additionally, while comparisons between
+different JVMs are already problematic, the performance difference caused by different Blackhole
+modes can be very significant. Please make sure you use the consistent Blackhole mode for comparisons.
+
+Benchmark                                   Mode  Cnt       Score      Error   Units
+AgentContextBuilderBenchmark.buildContext  thrpt    5      99.170 ±   19.315  ops/ms
+PromptComposerBenchmark.composePrompt      thrpt    5     112.321 ±   30.547  ops/ms
+ToolRegistryBenchmark.executeTool          thrpt    5  213663.872 ± 9663.358  ops/ms

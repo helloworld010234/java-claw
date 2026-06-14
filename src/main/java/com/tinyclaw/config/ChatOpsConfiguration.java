@@ -2,6 +2,10 @@ package com.tinyclaw.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tinyclaw.adapters.web.feishu.FeishuChatOpsMessageSender;
+import com.tinyclaw.adapters.web.feishu.FeishuHttpTransport;
+import com.tinyclaw.adapters.web.feishu.FeishuMessageApiClient;
+import com.tinyclaw.adapters.web.feishu.FeishuRestClientTransport;
+import com.tinyclaw.adapters.web.feishu.FeishuTenantAccessTokenProvider;
 import com.tinyclaw.adapters.web.feishu.FeishuWebhookController;
 import com.tinyclaw.adapters.web.feishu.dto.FeishuEventParser;
 import com.tinyclaw.application.chatops.ChatOpsApprovalCommandHandler;
@@ -19,9 +23,12 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
+import org.springframework.web.client.RestClient;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.time.Duration;
 import java.util.concurrent.ExecutorService;
 
 /**
@@ -38,8 +45,22 @@ public class ChatOpsConfiguration {
 
     @Bean
     @ConditionalOnProperty(prefix = "tiny-claw.chatops", name = "enabled", havingValue = "true")
-    ChatOpsMessageSender chatOpsMessageSender(ChatOpsProperties properties) {
-        return new FeishuChatOpsMessageSender(properties.isEnabled());
+    ChatOpsMessageSender chatOpsMessageSender(ChatOpsProperties properties, ObjectMapper objectMapper) {
+        FeishuHttpTransport transport = createTransport(properties.getRequestTimeoutSeconds());
+        FeishuTenantAccessTokenProvider tokenProvider = new FeishuTenantAccessTokenProvider(
+            properties.getBaseUrl(),
+            properties.getAppId(),
+            properties.getAppSecret(),
+            properties.getTokenRefreshSkewSeconds(),
+            transport,
+            objectMapper
+        );
+        FeishuMessageApiClient messageApiClient = new FeishuMessageApiClient(
+            properties.getBaseUrl(),
+            transport,
+            objectMapper
+        );
+        return new FeishuChatOpsMessageSender(properties, tokenProvider, messageApiClient);
     }
 
     @Bean
@@ -83,6 +104,20 @@ public class ChatOpsConfiguration {
             FeishuEventParser eventParser,
             ChatOpsProperties properties) {
         return new FeishuWebhookController(eventHandler, eventParser, properties);
+    }
+
+    private FeishuHttpTransport createTransport(long requestTimeoutSeconds) {
+        // ChatOpsProperties guarantees a positive value, but we guard here so the
+        // RestClient is never configured with a zero/negative timeout.
+        long timeoutSeconds = Math.max(1, requestTimeoutSeconds);
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        Duration timeout = Duration.ofSeconds(timeoutSeconds);
+        factory.setConnectTimeout(timeout);
+        factory.setReadTimeout(timeout);
+        RestClient restClient = RestClient.builder()
+            .requestFactory(factory)
+            .build();
+        return new FeishuRestClientTransport(restClient);
     }
 
     /**

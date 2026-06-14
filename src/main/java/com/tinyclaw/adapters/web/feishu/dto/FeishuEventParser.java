@@ -148,7 +148,7 @@ public class FeishuEventParser {
             }
             return fallback;
         } catch (JsonProcessingException e) {
-            log.warn("Failed to parse Feishu message content: {}", e.getMessage());
+            log.warn("Failed to parse Feishu message content; returning truncated fallback");
             String fallback = contentJson.trim();
             if (fallback.length() > 200) {
                 fallback = fallback.substring(0, 200) + "...";
