@@ -1,12 +1,17 @@
 package com.tinyclaw.adapters.web;
 
 import com.tinyclaw.adapters.web.dto.ApprovalActionRequest;
+import com.tinyclaw.application.approval.ApprovalResumeResult;
+import com.tinyclaw.application.approval.ApprovalResumeService;
 import com.tinyclaw.domain.approval.ApprovalRequest;
 import com.tinyclaw.domain.approval.ApprovalStatus;
+import com.tinyclaw.ports.persistence.AgentRunSummary;
 import com.tinyclaw.ports.persistence.ApprovalRepositoryPort;
+import com.tinyclaw.ports.persistence.RunRepositoryPort;
 import jakarta.validation.Valid;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -30,9 +35,20 @@ public class ApprovalController {
     private static final Logger log = LoggerFactory.getLogger(ApprovalController.class);
 
     private final ApprovalRepositoryPort approvalRepository;
+    private final ApprovalResumeService approvalResumeService;
+    private final RunRepositoryPort runRepository;
 
     public ApprovalController(ApprovalRepositoryPort approvalRepository) {
+        this(approvalRepository, null, null);
+    }
+
+    @Autowired
+    public ApprovalController(ApprovalRepositoryPort approvalRepository,
+                              ApprovalResumeService approvalResumeService,
+                              RunRepositoryPort runRepository) {
         this.approvalRepository = approvalRepository;
+        this.approvalResumeService = approvalResumeService;
+        this.runRepository = runRepository;
     }
 
     /**
@@ -65,11 +81,26 @@ public class ApprovalController {
             }
             ApprovalRequest approved = approval.approve(reason, now);
             approvalRepository.update(approved);
-            return ResponseEntity.ok(Map.of(
+
+            Map<String, Object> response = Map.of(
                 "approvalId", id,
                 "action", "approve",
                 "status", "APPROVED"
-            ));
+            );
+
+            if (approvalResumeService != null) {
+                ApprovalResumeResult result = approvalResumeService.resume(id);
+                response = Map.of(
+                    "approvalId", id,
+                    "action", "approve",
+                    "status", "APPROVED",
+                    "runId", result.runId(),
+                    "runStatus", result.runStatus().name(),
+                    "toolError", result.toolError(),
+                    "output", result.output()
+                );
+            }
+            return ResponseEntity.ok(response);
         } else if ("reject".equalsIgnoreCase(request.action())) {
             if (approval.status() != ApprovalStatus.PENDING) {
                 return ResponseEntity.status(409)
@@ -77,6 +108,13 @@ public class ApprovalController {
             }
             ApprovalRequest rejected = approval.reject(reason, now);
             approvalRepository.update(rejected);
+            if (runRepository != null) {
+                String safeReason = "Approval rejected: " + id;
+                int turnCount = runRepository.findById(approval.runId())
+                    .map(AgentRunSummary::turnCount)
+                    .orElse(0);
+                runRepository.saveRunFailed(approval.runId(), turnCount, safeReason, now);
+            }
             return ResponseEntity.ok(Map.of(
                 "approvalId", id,
                 "action", "reject",

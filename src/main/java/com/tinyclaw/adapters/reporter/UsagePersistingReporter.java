@@ -66,4 +66,5 @@ public class UsagePersistingReporter implements Reporter {
     @Override public void onToolResult(String runId, ToolResult toolResult) { }
     @Override public void onRunCompleted(String runId, RunReportResult result) { }
     @Override public void onRunFailed(String runId, String reason) { }
+    @Override public void onRunWaitingForApproval(String runId, String approvalId, String toolName, String argsPreview) { }
 }

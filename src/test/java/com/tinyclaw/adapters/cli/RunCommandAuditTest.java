@@ -740,14 +740,14 @@ class RunCommandAuditTest {
         assertThat(runId).isNotNull();
 
         AgentRunSummary run = runRepository.findById(runId).orElseThrow();
-        assertThat(run.status()).isEqualTo(AgentRunStatus.FAILED);
+        assertThat(run.status()).isEqualTo(AgentRunStatus.WAITING_APPROVAL);
 
         List<ToolExecutionRecord> executions = toolExecutionRepository.findByRunId(runId);
         assertThat(executions).hasSize(1);
+        assertThat(executions.get(0).stepId()).isEqualTo("t1");
+        assertThat(executions.get(0).toolName()).isEqualTo("shell_command");
         assertThat(executions.get(0).isError()).isTrue();
         assertThat(executions.get(0).output()).contains("Approval required");
-        String approvalId = extractApprovalId(executions.get(0).output());
-        assertThat(approvalId).isNotBlank();
 
         var approvals = approvalRepository.findByRunId(runId);
         assertThat(approvals).hasSize(1);
@@ -797,10 +797,20 @@ class RunCommandAuditTest {
     }
 
     private String extractApprovalId(String output) {
-        if (output.contains("Approval required:")) {
-            return output.substring(output.lastIndexOf(':') + 1).trim();
+        String marker = "Approval required:";
+        int start = output.indexOf(marker);
+        if (start < 0) {
+            return "";
         }
-        return "";
+        start += marker.length();
+        while (start < output.length() && Character.isWhitespace(output.charAt(start))) {
+            start++;
+        }
+        int end = start;
+        while (end < output.length() && !Character.isWhitespace(output.charAt(end))) {
+            end++;
+        }
+        return start < end ? output.substring(start, end) : "";
     }
 
     @Test

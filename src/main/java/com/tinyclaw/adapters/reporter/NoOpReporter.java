@@ -42,6 +42,11 @@ public class NoOpReporter implements Reporter {
     }
 
     @Override
+    public void onRunWaitingForApproval(String runId, String approvalId, String toolName, String argsPreview) {
+        // no-op
+    }
+
+    @Override
     public void onUsage(String runId, String sessionId, Usage usage, String model) {
         // no-op
     }

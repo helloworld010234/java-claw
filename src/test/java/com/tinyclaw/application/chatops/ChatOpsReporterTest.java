@@ -85,8 +85,8 @@ class ChatOpsReporterTest {
     }
 
     @Test
-    void notifyApprovalPendingSendsApprovalMessage() {
-        reporter.notifyApprovalPending("run-1", "apr-123", "write_file", "{\"path\":\"x\"}");
+    void onRunWaitingForApprovalSendsApprovalMessage() {
+        reporter.onRunWaitingForApproval("run-1", "apr-123", "write_file", "{\"path\":\"x\"}");
         assertThat(sender.hasMessageContaining("Approval required")).isTrue();
         assertThat(sender.hasMessageContaining("write_file")).isTrue();
     }
@@ -149,7 +149,7 @@ class ChatOpsReporterTest {
     @Test
     void approvalPendingMasksSecretInArgs() {
         String args = "{\"client_secret\":\"cs-abcdef\",\"path\":\"/tmp\"}";
-        reporter.notifyApprovalPending("run-1", "apr-123", "write_file", args);
+        reporter.onRunWaitingForApproval("run-1", "apr-123", "write_file", args);
         var msg = sender.getMessages().get(0);
         assertThat(msg.text()).doesNotContain("cs-abcdef");
         assertThat(msg.text()).contains("***");

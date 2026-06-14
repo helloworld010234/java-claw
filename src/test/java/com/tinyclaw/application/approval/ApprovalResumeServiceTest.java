@@ -1,10 +1,17 @@
 package com.tinyclaw.application.approval;
 
 import com.tinyclaw.ports.persistence.AgentRunSummary;
+import com.tinyclaw.ports.persistence.AgentMessageDto;
 import com.tinyclaw.ports.persistence.ToolExecutionRecord;
+import com.tinyclaw.adapters.reporter.NoOpReporter;
+import com.tinyclaw.adapters.session.InMemorySessionService;
+import com.tinyclaw.application.engine.AgentEngine;
+import com.tinyclaw.application.engine.AgentRunResult;
+import com.tinyclaw.application.engine.PromptComposer;
 import com.tinyclaw.application.tool.ToolRegistry;
 import com.tinyclaw.domain.approval.ApprovalRequest;
 import com.tinyclaw.domain.approval.ApprovalStatus;
+import com.tinyclaw.domain.message.Message;
 import com.tinyclaw.domain.message.ToolCall;
 import com.tinyclaw.domain.message.ToolDefinition;
 import com.tinyclaw.domain.message.ToolResult;
@@ -13,6 +20,7 @@ import com.tinyclaw.domain.run.AgentRunStatus;
 import com.tinyclaw.domain.session.Session;
 import com.tinyclaw.domain.session.SessionStatus;
 import com.tinyclaw.ports.persistence.ApprovalRepositoryPort;
+import com.tinyclaw.ports.persistence.MessageRepositoryPort;
 import com.tinyclaw.ports.persistence.RunRepositoryPort;
 import com.tinyclaw.ports.persistence.ToolExecutionRepositoryPort;
 import com.tinyclaw.ports.tool.AgentTool;
@@ -272,6 +280,51 @@ class ApprovalResumeServiceTest {
     }
 
     @Test
+    void successfulResumeContinuesEngineFromPersistedTurnAndConfiguredMaxTurns() {
+        AgentTool echoTool = new AgentToolStub("shell_command", ToolResult.success("tc-1", "resumed-ok"));
+        ToolRegistry registry = new ToolRegistry(List.of(echoTool));
+        InMemorySessionService sessionService = new InMemorySessionService();
+        CapturingMessageRepository messageRepository = new CapturingMessageRepository();
+        SpyResumeEngine resumeEngine = new SpyResumeEngine(registry, sessionService);
+        ApprovalResumeService service = new ApprovalResumeService(
+            approvalRepository,
+            runRepository,
+            toolExecutionRepository,
+            registry,
+            new ApprovalResumeLockRegistry(),
+            CLOCK,
+            sessionService,
+            messageRepository,
+            resumeEngine,
+            5
+        );
+        seedApprovedApprovalAndRun("apr-continue", "run-1", "sess-1", "tc-1", "shell_command",
+            "{\"command\":\"echo hi\"}");
+        runRepository.saveRunWaitingForApproval("run-1", 1, "apr-continue", CLOCK.instant());
+
+        ApprovalResumeResult result = service.resume("apr-continue");
+
+        assertThat(result.resumed()).isTrue();
+        assertThat(result.toolError()).isFalse();
+        assertThat(result.runStatus()).isEqualTo(AgentRunStatus.COMPLETED);
+        assertThat(result.finalMessage()).isEqualTo("final after resume");
+        assertThat(resumeEngine.capturedRun).isNotNull();
+        assertThat(resumeEngine.capturedRun.currentTurn()).isEqualTo(1);
+        assertThat(resumeEngine.capturedRun.maxTurns()).isEqualTo(5);
+        assertThat(resumeEngine.capturedRun.status()).isEqualTo(AgentRunStatus.WAITING_APPROVAL);
+        assertThat(resumeEngine.capturedContext.approvedApprovalId()).isNull();
+        assertThat(resumeEngine.capturedContext.runId()).isEqualTo("run-1");
+        assertThat(resumeEngine.capturedContext.sessionId()).isEqualTo("sess-1");
+        assertThat(sessionService.getWorkingMemory("sess-1"))
+            .anyMatch(m -> m.toolCallId().equals("tc-1") && m.content().equals("resumed-ok"));
+        assertThat(messageRepository.messages)
+            .anyMatch(m -> m.toolCallId().equals("tc-1") && m.content().equals("resumed-ok"));
+        AgentRunSummary run = runRepository.findById("run-1").orElseThrow();
+        assertThat(run.status()).isEqualTo(AgentRunStatus.COMPLETED);
+        assertThat(run.turnCount()).isEqualTo(2);
+    }
+
+    @Test
     void claimSuccessButMissingRunConsumesApproval() {
         ApprovalResumeService service = new ApprovalResumeService(
             approvalRepository, runRepository, toolExecutionRepository, new ToolRegistry(List.of()), new ApprovalResumeLockRegistry(), CLOCK
@@ -446,6 +499,43 @@ class ApprovalResumeServiceTest {
         }
     }
 
+    private static class SpyResumeEngine extends AgentEngine {
+        AgentRun capturedRun;
+        ToolExecutionContext capturedContext;
+
+        SpyResumeEngine(ToolRegistry registry, com.tinyclaw.ports.session.SessionService sessionService) {
+            super(request -> new com.tinyclaw.ports.llm.LlmResponse("unused", List.of(), null),
+                registry, new PromptComposer(), new NoOpReporter(), sessionService, CLOCK);
+        }
+
+        @Override
+        public AgentRunResult resume(AgentRun run, Session session, ToolExecutionContext toolContext,
+                                     ToolExecutionRepositoryPort toolExecutionRepository) {
+            capturedRun = run;
+            capturedContext = toolContext;
+            return new AgentRunResult(true, "final after resume", run.currentTurn() + 1, null);
+        }
+    }
+
+    private static class CapturingMessageRepository implements MessageRepositoryPort {
+        private final List<Message> messages = new ArrayList<>();
+
+        @Override
+        public void append(String runId, String sessionId, Message message) {
+            messages.add(message);
+        }
+
+        @Override
+        public List<AgentMessageDto> findByRunId(String runId) {
+            return List.of();
+        }
+
+        @Override
+        public List<AgentMessageDto> findBySessionId(String sessionId, int limit) {
+            return List.of();
+        }
+    }
+
     private static class InMemoryApprovalRepository implements ApprovalRepositoryPort {
         private final List<ApprovalRequest> requests = new ArrayList<>();
 
@@ -564,6 +654,17 @@ class ApprovalResumeServiceTest {
         @Override
         public Optional<AgentRunSummary> findById(String runId) {
             return runs.stream().filter(r -> r.id().equals(runId)).findFirst();
+        }
+
+        @Override
+        public void saveRunWaitingForApproval(String runId, int turnCount, String approvalId, Instant now) {
+            AgentRunSummary existing = findById(runId).orElseThrow();
+            runs.removeIf(r -> r.id().equals(runId));
+            runs.add(new AgentRunSummary(
+                runId, existing.sessionId(), existing.mode(),
+                AgentRunStatus.WAITING_APPROVAL, turnCount, existing.prompt(),
+                "Approval required: " + approvalId, existing.startedAt(), null
+            ));
         }
     }
 

@@ -76,9 +76,7 @@ public class ApprovalGatePolicy implements ToolExecutionPolicy {
             context.runId(), call.id()
         );
         if (existing.isPresent() && existing.get().status() == ApprovalStatus.PENDING) {
-            return ToolExecutionDecision.requireApproval(
-                "Approval required: " + existing.get().id()
-            );
+            return ToolExecutionDecision.requireApproval(existing.get().id());
         }
 
         String preview = previewer.preview(call.argumentsJson());
@@ -93,9 +91,7 @@ public class ApprovalGatePolicy implements ToolExecutionPolicy {
         );
         approvalRepository.save(request);
 
-        return ToolExecutionDecision.requireApproval(
-            "Approval required: " + request.id()
-        );
+        return ToolExecutionDecision.requireApproval(request.id());
     }
 
     private ToolExecutionDecision evaluateApprovedApproval(ToolCall call, ToolExecutionContext context) {

@@ -7,6 +7,7 @@ import com.tinyclaw.application.tool.ToolRegistry;
 import com.tinyclaw.domain.common.DomainGuards;
 import com.tinyclaw.domain.message.ToolCall;
 import com.tinyclaw.domain.message.ToolResult;
+import com.tinyclaw.domain.tool.ToolApprovalRequiredException;
 import com.tinyclaw.ports.persistence.ToolExecutionRepositoryPort;
 import com.tinyclaw.ports.tool.ToolExecutionContext;
 
@@ -54,7 +55,13 @@ public class ScriptedRunExecutor {
 
             ToolCall call = ToolCall.of(step.id(), step.tool(), argsJson);
             Instant startedAt = Instant.now();
-            ToolResult result = toolRegistry.execute(call, context);
+            ToolResult result;
+            try {
+                result = toolRegistry.execute(call, context);
+            } catch (ToolApprovalRequiredException e) {
+                result = ToolResult.failure(call.id(),
+                    "Approval required: " + e.approvalId() + " for tool " + call.name());
+            }
             Instant completedAt = Instant.now();
 
             results.add(new ScriptedRunStepResult(

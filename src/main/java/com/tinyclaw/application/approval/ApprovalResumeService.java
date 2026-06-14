@@ -1,19 +1,27 @@
 package com.tinyclaw.application.approval;
 
-import com.tinyclaw.ports.persistence.AgentRunSummary;
-import com.tinyclaw.ports.persistence.ToolExecutionRecord;
+import com.tinyclaw.application.engine.AgentEngine;
+import com.tinyclaw.application.engine.AgentRunResult;
 import com.tinyclaw.application.tool.ToolRegistry;
 import com.tinyclaw.domain.approval.ApprovalRequest;
 import com.tinyclaw.domain.approval.ApprovalStatus;
 import com.tinyclaw.domain.common.DomainGuards;
+import com.tinyclaw.domain.message.Message;
 import com.tinyclaw.domain.message.ToolCall;
 import com.tinyclaw.domain.message.ToolResult;
+import com.tinyclaw.domain.run.AgentRun;
 import com.tinyclaw.domain.run.AgentRunStatus;
 import com.tinyclaw.domain.session.Session;
+import com.tinyclaw.ports.persistence.AgentRunSummary;
 import com.tinyclaw.ports.persistence.ApprovalRepositoryPort;
+import com.tinyclaw.ports.persistence.MessageRepositoryPort;
 import com.tinyclaw.ports.persistence.RunRepositoryPort;
+import com.tinyclaw.ports.persistence.ToolExecutionRecord;
 import com.tinyclaw.ports.persistence.ToolExecutionRepositoryPort;
+import com.tinyclaw.ports.session.SessionService;
 import com.tinyclaw.ports.tool.ToolExecutionContext;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.nio.file.Path;
 import java.time.Clock;
@@ -23,11 +31,16 @@ import java.util.Optional;
 import java.util.UUID;
 
 /**
- * Application service that resumes a previously approved tool call.
+ * Application service that resumes a previously approved tool call and continues
+ * the ReAct loop.
  *
  * <p>Looks up the approval, the original run, and the original tool execution
  * audit record, then re-executes the same tool call. The new execution result
  * is appended as a fresh audit record and the run status is updated.</p>
+ *
+ * <p>After the approved tool succeeds, the service delegates back to
+ * {@link AgentEngine#resume} to continue subsequent LLM turns. If the tool
+ * fails, the run is marked failed with an auditable reason.</p>
  *
  * <p><strong>Single-use semantics:</strong> once a tool call has been executed
  * (whether it succeeds or fails), the approval is marked {@code RESUMED}
@@ -36,12 +49,18 @@ import java.util.UUID;
  */
 public class ApprovalResumeService {
 
+    private static final Logger log = LoggerFactory.getLogger(ApprovalResumeService.class);
+
     private final ApprovalRepositoryPort approvalRepository;
     private final RunRepositoryPort runRepository;
     private final ToolExecutionRepositoryPort toolExecutionRepository;
     private final ToolRegistry toolRegistry;
     private final ApprovalResumeLockRegistry lockRegistry;
     private final Clock clock;
+    private final SessionService sessionService;
+    private final MessageRepositoryPort messageRepository;
+    private final AgentEngine agentEngine;
+    private final int resumeMaxTurns;
 
     public ApprovalResumeService(ApprovalRepositoryPort approvalRepository,
                                  RunRepositoryPort runRepository,
@@ -49,12 +68,43 @@ public class ApprovalResumeService {
                                  ToolRegistry toolRegistry,
                                  ApprovalResumeLockRegistry lockRegistry,
                                  Clock clock) {
+        this(approvalRepository, runRepository, toolExecutionRepository, toolRegistry, lockRegistry, clock,
+            null, null, null, 20);
+    }
+
+    public ApprovalResumeService(ApprovalRepositoryPort approvalRepository,
+                                 RunRepositoryPort runRepository,
+                                 ToolExecutionRepositoryPort toolExecutionRepository,
+                                 ToolRegistry toolRegistry,
+                                 ApprovalResumeLockRegistry lockRegistry,
+                                 Clock clock,
+                                 SessionService sessionService,
+                                 MessageRepositoryPort messageRepository,
+                                 AgentEngine agentEngine) {
+        this(approvalRepository, runRepository, toolExecutionRepository, toolRegistry, lockRegistry, clock,
+            sessionService, messageRepository, agentEngine, 20);
+    }
+
+    public ApprovalResumeService(ApprovalRepositoryPort approvalRepository,
+                                 RunRepositoryPort runRepository,
+                                 ToolExecutionRepositoryPort toolExecutionRepository,
+                                 ToolRegistry toolRegistry,
+                                 ApprovalResumeLockRegistry lockRegistry,
+                                 Clock clock,
+                                 SessionService sessionService,
+                                 MessageRepositoryPort messageRepository,
+                                 AgentEngine agentEngine,
+                                 int resumeMaxTurns) {
         this.approvalRepository = DomainGuards.requireNonNull(approvalRepository, "approvalRepository");
         this.runRepository = DomainGuards.requireNonNull(runRepository, "runRepository");
         this.toolExecutionRepository = DomainGuards.requireNonNull(toolExecutionRepository, "toolExecutionRepository");
         this.toolRegistry = DomainGuards.requireNonNull(toolRegistry, "toolRegistry");
         this.lockRegistry = DomainGuards.requireNonNull(lockRegistry, "lockRegistry");
         this.clock = DomainGuards.requireNonNull(clock, "clock");
+        this.sessionService = sessionService;
+        this.messageRepository = messageRepository;
+        this.agentEngine = agentEngine;
+        this.resumeMaxTurns = Math.max(resumeMaxTurns, 1);
     }
 
     /**
@@ -115,7 +165,7 @@ public class ApprovalResumeService {
                 "Session not found: " + claimedApproval.sessionId());
         }
 
-        AgentRunSummary run = maybeRun.get();
+        AgentRunSummary runSummary = maybeRun.get();
         Session session = maybeSession.get();
 
         Optional<ToolExecutionRecord> maybeOriginal = findOriginalToolExecution(claimedApproval.runId(), claimedApproval.toolCallId());
@@ -156,16 +206,12 @@ public class ApprovalResumeService {
         );
         toolExecutionRepository.append(claimedApproval.runId(), resumedRecord);
 
-        // Consume the approval token regardless of tool success or failure
-        String resumeReason = toolResult.error()
-            ? "resume attempted but tool failed"
-            : "resumed successfully";
-        ApprovalRequest consumed = claimedApproval.markResumed(resumeReason, completedAt);
-        approvalRepository.update(consumed);
-
         if (toolResult.error()) {
-            runRepository.saveRunFailed(claimedApproval.runId(), run.turnCount(),
-                "Resume failed: " + toolResult.output(), completedAt);
+            String resumeReason = "resume attempted but tool failed";
+            ApprovalRequest consumed = claimedApproval.markResumed(resumeReason, completedAt);
+            approvalRepository.update(consumed);
+            String failureReason = "Resume failed: " + toolResult.output();
+            runRepository.saveRunFailed(claimedApproval.runId(), runSummary.turnCount(), failureReason, completedAt);
             return new ApprovalResumeResult(
                 approvalId,
                 claimedApproval.runId(),
@@ -174,21 +220,107 @@ public class ApprovalResumeService {
                 true,
                 true,
                 AgentRunStatus.FAILED,
-                toolResult.output()
+                toolResult.output(),
+                ""
             );
         }
 
-        runRepository.saveRunCompleted(claimedApproval.runId(), run.turnCount(), completedAt);
+        // Append the tool observation to the session so the LLM can see it
+        Message observation = Message.toolObservation(call.id(), toolResult.output());
+        if (sessionService != null) {
+            sessionService.appendMessage(session.id(), observation);
+        }
+        if (messageRepository != null) {
+            messageRepository.append(claimedApproval.runId(), session.id(), observation);
+        }
+
+        // Continue the ReAct loop if an engine is available
+        AgentRunResult engineResult = null;
+        if (agentEngine != null) {
+            AgentRun run = reconstructWaitingRun(runSummary);
+            ToolExecutionContext continuationContext = new ToolExecutionContext(
+                Path.of(session.workDir()),
+                claimedApproval.runId(),
+                claimedApproval.sessionId()
+            );
+            engineResult = agentEngine.resume(run, session, continuationContext, toolExecutionRepository);
+        }
+
+        String resumeReason = engineResult != null && engineResult.success()
+            ? "resumed and run continued to completion"
+            : "resumed successfully";
+        ApprovalRequest consumed = claimedApproval.markResumed(resumeReason, completedAt);
+        approvalRepository.update(consumed);
+
+        if (engineResult == null) {
+            runRepository.saveRunCompleted(claimedApproval.runId(), runSummary.turnCount(), completedAt);
+            return new ApprovalResumeResult(
+                approvalId,
+                claimedApproval.runId(),
+                claimedApproval.toolCallId(),
+                claimedApproval.toolName(),
+                true,
+                false,
+                AgentRunStatus.COMPLETED,
+                toolResult.output(),
+                ""
+            );
+        }
+
+        if (engineResult.waitingForApproval()) {
+            String nextApprovalId = extractApprovalId(engineResult);
+            runRepository.saveRunWaitingForApproval(
+                claimedApproval.runId(), engineResult.turnCount(), nextApprovalId, completedAt);
+            return new ApprovalResumeResult(
+                approvalId,
+                claimedApproval.runId(),
+                claimedApproval.toolCallId(),
+                claimedApproval.toolName(),
+                true,
+                false,
+                AgentRunStatus.WAITING_APPROVAL,
+                toolResult.output(),
+                engineResult.errorReason()
+            );
+        }
+
+        if (engineResult.success()) {
+            runRepository.saveRunCompleted(claimedApproval.runId(), engineResult.turnCount(), completedAt);
+        } else {
+            runRepository.saveRunFailed(claimedApproval.runId(), engineResult.turnCount(),
+                engineResult.errorReason(), completedAt);
+        }
+
         return new ApprovalResumeResult(
             approvalId,
             claimedApproval.runId(),
             claimedApproval.toolCallId(),
             claimedApproval.toolName(),
             true,
-            false,
-            AgentRunStatus.COMPLETED,
-            toolResult.output()
+            !engineResult.success(),
+            engineResult.success() ? AgentRunStatus.COMPLETED : AgentRunStatus.FAILED,
+            toolResult.output(),
+            engineResult.finalMessage()
         );
+    }
+
+    private String extractApprovalId(AgentRunResult result) {
+        String reason = result.errorReason();
+        if (reason == null || !reason.startsWith("Approval required: ")) {
+            return "";
+        }
+        String remainder = reason.substring("Approval required: ".length());
+        int spaceIdx = remainder.indexOf(' ');
+        return spaceIdx > 0 ? remainder.substring(0, spaceIdx) : remainder;
+    }
+
+    private AgentRun reconstructWaitingRun(AgentRunSummary runSummary) {
+        int maxTurns = Math.max(resumeMaxTurns, runSummary.turnCount() + 1);
+        AgentRun run = AgentRun.start(runSummary.id(), runSummary.sessionId(), maxTurns, runSummary.startedAt());
+        for (int i = 0; i < runSummary.turnCount(); i++) {
+            run = run.nextTurn();
+        }
+        return run.waitForApproval();
     }
 
     private void consumeClaimedApproval(ApprovalRequest claimedApproval, String reason) {
@@ -216,7 +348,8 @@ public class ApprovalResumeService {
             false,
             true,
             AgentRunStatus.FAILED,
-            error
+            error,
+            ""
         );
     }
 }

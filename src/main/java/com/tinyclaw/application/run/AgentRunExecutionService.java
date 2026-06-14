@@ -130,7 +130,10 @@ public class AgentRunExecutionService {
         }
 
         if (runRepository != null) {
-            if (result.success()) {
+            if (result.waitingForApproval()) {
+                String approvalId = extractApprovalId(result);
+                runRepository.saveRunWaitingForApproval(runId, result.turnCount(), approvalId, Instant.now());
+            } else if (result.success()) {
                 runRepository.saveRunCompleted(runId, result.turnCount(), Instant.now());
             } else {
                 runRepository.saveRunFailed(runId, result.turnCount(), result.errorReason(), Instant.now());
@@ -146,6 +149,16 @@ public class AgentRunExecutionService {
         }
 
         return result;
+    }
+
+    private String extractApprovalId(AgentRunResult result) {
+        String reason = result.errorReason();
+        if (reason == null || !reason.startsWith("Approval required: ")) {
+            return "";
+        }
+        String remainder = reason.substring("Approval required: ".length());
+        int spaceIdx = remainder.indexOf(' ');
+        return spaceIdx > 0 ? remainder.substring(0, spaceIdx) : remainder;
     }
 
     private void persistDeltaMessages(String runId, Session session, List<Message> messagesBefore) {

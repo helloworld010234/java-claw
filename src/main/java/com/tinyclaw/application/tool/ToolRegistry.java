@@ -13,6 +13,7 @@ import com.tinyclaw.ports.tool.ToolExecutionDecisionType;
 import com.tinyclaw.ports.tool.ToolExecutionPolicy;
 
 import com.tinyclaw.domain.message.ToolDefinition;
+import com.tinyclaw.domain.tool.ToolApprovalRequiredException;
 
 import java.util.List;
 import java.util.Map;
@@ -84,10 +85,13 @@ public class ToolRegistry implements ToolCatalog {
                 return ToolResult.failure(call.id(), decision.reason());
             }
             if (decision.type() == ToolExecutionDecisionType.REQUIRE_APPROVAL) {
-                if (agentMetrics != null) {
-                    agentMetrics.recordToolExecution(call.name(), false);
-                }
-                return ToolResult.failure(call.id(), decision.reason());
+                throw new ToolApprovalRequiredException(
+                    decision.reason(),
+                    context.runId(),
+                    context.sessionId(),
+                    call,
+                    call.argumentsJson()
+                );
             }
         }
 

@@ -16,6 +16,7 @@ import com.tinyclaw.application.engine.ToolFailureRecoveryAdvisor;
 import com.tinyclaw.application.engine.WorkingMemorySelector;
 import com.tinyclaw.application.tool.ToolRegistry;
 import com.tinyclaw.domain.message.Message;
+import com.tinyclaw.domain.message.Role;
 import com.tinyclaw.domain.message.ToolCall;
 import com.tinyclaw.domain.message.ToolDefinition;
 import com.tinyclaw.ports.persistence.ToolExecutionRecord;
@@ -485,22 +486,47 @@ class AgentEngineTest {
             new LlmResponse("Could not write", List.of(), null)
         ));
         AgentEngine engine = new AgentEngine(fakeLlm, gatedRegistry, promptComposer, reporter, sessionService, clock);
+        List<ToolExecutionRecord> captured = new ArrayList<>();
+        ToolExecutionRepositoryPort toolRepo = new ToolExecutionRepositoryPort() {
+            @Override
+            public void append(String runId, ToolExecutionRecord record) {
+                captured.add(record);
+            }
+
+            @Override
+            public List<ToolExecutionRecord> findByRunId(String runId) {
+                return captured.stream().filter(r -> r.runId().equals(runId)).toList();
+            }
+        };
 
         AgentRunResult result = engine.run(
             startRun(3), createSession(), "Write a file",
-            new ToolExecutionContext(workspace, "run-1", "session-1")
+            new ToolExecutionContext(workspace, "run-1", "session-1"),
+            toolRepo
         );
 
         assertThat(result.success()).isFalse();
-        assertThat(result.errorReason()).contains("write_file").contains("failed");
+        assertThat(result.waitingForApproval()).isTrue();
+        assertThat(result.errorReason()).contains("write_file").contains("Approval required");
 
         List<Message> memory = sessionService.getWorkingMemory("session-1");
-        assertThat(memory).hasSize(4);
-        assertThat(memory.get(2).content()).contains("Approval required");
+        assertThat(memory).hasSize(2);
+        assertThat(memory.get(0).role()).isEqualTo(Role.USER);
+        assertThat(memory.get(1).role()).isEqualTo(Role.ASSISTANT);
+        assertThat(memory.get(1).toolCalls()).isNotEmpty();
 
         assertThat(approvalRepo.requests).hasSize(1);
         assertThat(approvalRepo.requests.get(0).status()).isEqualTo(ApprovalStatus.PENDING);
         assertThat(approvalRepo.requests.get(0).toolCallId()).isEqualTo("t1");
+        assertThat(captured).hasSize(1);
+        ToolExecutionRecord approvalRecord = captured.get(0);
+        assertThat(approvalRecord.runId()).isEqualTo("run-1");
+        assertThat(approvalRecord.sessionId()).isEqualTo("session-1");
+        assertThat(approvalRecord.stepId()).isEqualTo("t1");
+        assertThat(approvalRecord.toolName()).isEqualTo("write_file");
+        assertThat(approvalRecord.argumentsJson()).isEqualTo("{\"path\":\"out.txt\",\"content\":\"data\"}");
+        assertThat(approvalRecord.output()).contains("Approval required");
+        assertThat(approvalRecord.isError()).isTrue();
     }
 
     @Test

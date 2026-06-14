@@ -3,6 +3,7 @@ package com.tinyclaw.application.tool;
 import com.tinyclaw.domain.common.TinyClawDomainException;
 import com.tinyclaw.domain.message.ToolCall;
 import com.tinyclaw.domain.message.ToolDefinition;
+import com.tinyclaw.domain.tool.ToolApprovalRequiredException;
 import com.tinyclaw.domain.message.ToolResult;
 import com.tinyclaw.ports.tool.AgentTool;
 import com.tinyclaw.ports.tool.ToolExecutionContext;
@@ -114,16 +115,19 @@ class ToolRegistryTest {
     }
 
     @Test
-    void approvalRequiredProducesFailureResultWithReason() {
+    void approvalRequiredThrowsToolApprovalRequiredException() {
         SpyTool spyTool = spyTool("shell_command", ToolResult.success("call-1", "should-not-run"));
         ToolExecutionPolicy approvalPolicy = (call, ctx) ->
-            ToolExecutionDecision.requireApproval("Approval required: apr-1");
+            ToolExecutionDecision.requireApproval("apr-1");
         ToolRegistry registry = new ToolRegistry(List.of(spyTool), List.of(approvalPolicy));
 
-        ToolResult result = registry.execute(ToolCall.of("call-1", "shell_command", "{}"), CONTEXT);
-
-        assertThat(result.error()).isTrue();
-        assertThat(result.output()).isEqualTo("Approval required: apr-1");
+        assertThatThrownBy(() -> registry.execute(ToolCall.of("call-1", "shell_command", "{}"), CONTEXT))
+            .isInstanceOf(ToolApprovalRequiredException.class)
+            .satisfies(ex -> {
+                ToolApprovalRequiredException approvalEx = (ToolApprovalRequiredException) ex;
+                assertThat(approvalEx.approvalId()).isEqualTo("apr-1");
+                assertThat(approvalEx.toolCall().name()).isEqualTo("shell_command");
+            });
         assertThat(spyTool.executeWasCalled).isFalse();
     }
 
@@ -140,12 +144,16 @@ class ToolRegistryTest {
         ToolRegistry registry = new ToolRegistry(List.of(readTool, writeTool), List.of(approvalPolicy));
 
         ToolResult readResult = registry.execute(ToolCall.of("call-read", "read_file", "{}"), CONTEXT);
-        ToolResult writeResult = registry.execute(ToolCall.of("call-write", "write_file", "{}"), CONTEXT);
 
         assertThat(readResult.error()).isFalse();
         assertThat(readResult.output()).isEqualTo("ok");
-        assertThat(writeResult.error()).isTrue();
-        assertThat(writeResult.output()).isEqualTo("write_file requires approval");
+        assertThatThrownBy(() -> registry.execute(ToolCall.of("call-write", "write_file", "{}"), CONTEXT))
+            .isInstanceOf(ToolApprovalRequiredException.class)
+            .satisfies(ex -> {
+                ToolApprovalRequiredException approvalEx = (ToolApprovalRequiredException) ex;
+                assertThat(approvalEx.approvalId()).isEqualTo("write_file requires approval");
+                assertThat(approvalEx.toolCall().name()).isEqualTo("write_file");
+            });
         assertThat(writeTool.executeWasCalled).isFalse();
     }
 

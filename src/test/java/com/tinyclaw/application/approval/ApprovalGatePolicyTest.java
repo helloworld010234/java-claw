@@ -46,7 +46,7 @@ class ApprovalGatePolicyTest {
         );
 
         assertThat(decision.requiresApproval()).isTrue();
-        assertThat(decision.reason()).startsWith("Approval required:");
+        assertThat(decision.reason()).isNotBlank();
     }
 
     @Test
@@ -277,7 +277,7 @@ class ApprovalGatePolicyTest {
     }
 
     private String extractApprovalId(String reason) {
-        return reason.substring(reason.lastIndexOf(':') + 1).trim();
+        return reason.trim();
     }
 
     private static class InMemoryApprovalRepository implements ApprovalRepositoryPort {

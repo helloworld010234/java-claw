@@ -11,7 +11,7 @@ import com.tinyclaw.application.engine.AgentEngine;
 import com.tinyclaw.application.run.AgentRunExecutionService;
 import com.tinyclaw.ports.chatops.ChatOpsMessageSender;
 import com.tinyclaw.ports.persistence.ApprovalRepositoryPort;
-import com.tinyclaw.ports.reporter.Reporter;
+import com.tinyclaw.ports.persistence.RunRepositoryPort;
 import com.tinyclaw.ports.session.SessionService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -58,10 +58,12 @@ public class ChatOpsConfiguration {
             ChatOpsProperties properties,
             AgentProperties agentProperties,
             AgentEngine agentEngine,
-            ApprovalRepositoryPort approvalRepository) {
+            ApprovalRepositoryPort approvalRepository,
+            RunRepositoryPort runRepository,
+            com.tinyclaw.application.approval.ApprovalResumeService approvalResumeService) {
         Path workspace = Paths.get(properties.getWorkspace()).toAbsolutePath().normalize();
         ChatOpsApprovalCommandHandler approvalCommandHandler =
-            new ChatOpsApprovalCommandHandler(approvalRepository, null);
+            new ChatOpsApprovalCommandHandler(approvalRepository, approvalResumeService, runRepository, null);
         return new ChatOpsEventHandler(
             executionService,
             sessionService,

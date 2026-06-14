@@ -45,6 +45,12 @@ public class ConsoleReporter implements Reporter {
     }
 
     @Override
+    public void onRunWaitingForApproval(String runId, String approvalId, String toolName, String argsPreview) {
+        System.out.println("[run " + runId + "] Waiting for approval " + approvalId
+            + " (tool: " + toolName + ")");
+    }
+
+    @Override
     public void onUsage(String runId, String sessionId, Usage usage, String model) {
         System.out.println("[run " + runId + "] Usage: " + usage.promptTokens()
             + " prompt / " + usage.completionTokens() + " completion tokens"

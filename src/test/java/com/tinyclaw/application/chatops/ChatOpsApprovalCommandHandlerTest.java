@@ -2,10 +2,15 @@ package com.tinyclaw.application.chatops;
 
 import com.tinyclaw.domain.approval.ApprovalRequest;
 import com.tinyclaw.domain.approval.ApprovalStatus;
+import com.tinyclaw.domain.run.AgentRun;
+import com.tinyclaw.domain.run.AgentRunStatus;
+import com.tinyclaw.domain.session.Session;
 import com.tinyclaw.ports.chatops.ChatOpsEvent;
 import com.tinyclaw.ports.chatops.ChatOpsOutboundMessage;
 import com.tinyclaw.ports.chatops.FakeChatOpsMessageSender;
+import com.tinyclaw.ports.persistence.AgentRunSummary;
 import com.tinyclaw.ports.persistence.ApprovalRepositoryPort;
+import com.tinyclaw.ports.persistence.RunRepositoryPort;
 import org.junit.jupiter.api.Test;
 
 import java.time.Clock;
@@ -45,13 +50,19 @@ class ChatOpsApprovalCommandHandlerTest {
     @Test
     void rejectCommandTransitionsPendingToRejected() {
         InMemoryApprovalRepository repository = new InMemoryApprovalRepository();
+        CapturingRunRepository runRepository = new CapturingRunRepository();
         ApprovalRequest pending = ApprovalRequest.pending(
             "apr-2", "run-1", "sess-1", "tc-1", "write_file", "args", clock.instant()
         );
         repository.save(pending);
+        runRepository.summary = new AgentRunSummary(
+            "run-1", "sess-1", "chatops", AgentRunStatus.WAITING_APPROVAL, 3,
+            "prompt", "Approval required: apr-2", clock.instant(), null
+        );
 
         FakeChatOpsMessageSender sender = new FakeChatOpsMessageSender();
-        ChatOpsApprovalCommandHandler handler = new ChatOpsApprovalCommandHandler(repository, clock);
+        ChatOpsApprovalCommandHandler handler = new ChatOpsApprovalCommandHandler(
+            repository, null, runRepository, clock);
 
         ChatOpsEvent event = new ChatOpsEvent("evt-1", "msg-1", "chat-1", "user-1", "reject apr-2",
             Instant.now(), ChatOpsEvent.Type.TEXT_MESSAGE);
@@ -61,6 +72,9 @@ class ChatOpsApprovalCommandHandlerTest {
         ApprovalRequest updated = repository.findById("apr-2").orElseThrow();
         assertThat(updated.status()).isEqualTo(ApprovalStatus.REJECTED);
         assertThat(sender.getMessages()).anyMatch(m -> m.text().contains("rejected"));
+        assertThat(runRepository.failedRunId).isEqualTo("run-1");
+        assertThat(runRepository.failedTurnCount).isEqualTo(3);
+        assertThat(runRepository.failedReason).isEqualTo("Approval rejected: apr-2");
     }
 
     @Test
@@ -170,6 +184,52 @@ class ChatOpsApprovalCommandHandlerTest {
         @Override
         public boolean claimForResume(String approvalId, Instant now) {
             return false;
+        }
+    }
+
+    private static class CapturingRunRepository implements RunRepositoryPort {
+        AgentRunSummary summary;
+        String failedRunId;
+        int failedTurnCount = -1;
+        String failedReason;
+
+        @Override
+        public void saveSession(Session session) {
+        }
+
+        @Override
+        public Optional<Session> findSessionById(String sessionId) {
+            return Optional.empty();
+        }
+
+        @Override
+        public void saveRunStarted(AgentRun run, String mode, String prompt) {
+        }
+
+        @Override
+        public void saveRunCompleted(AgentRun run) {
+        }
+
+        @Override
+        public void saveRunCompleted(String runId, int turnCount, Instant completedAt) {
+        }
+
+        @Override
+        public void saveRunFailed(AgentRun run, String reason) {
+        }
+
+        @Override
+        public void saveRunFailed(String runId, int turnCount, String reason, Instant completedAt) {
+            failedRunId = runId;
+            failedTurnCount = turnCount;
+            failedReason = reason;
+        }
+
+        @Override
+        public Optional<AgentRunSummary> findById(String runId) {
+            return summary != null && summary.id().equals(runId)
+                ? Optional.of(summary)
+                : Optional.empty();
         }
     }
 }

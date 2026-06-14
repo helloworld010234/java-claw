@@ -66,15 +66,12 @@ public class ChatOpsReporter implements Reporter {
     }
 
     @Override
-    public void onUsage(String runId, String sessionId, Usage usage, String model) {
-        // Usage is not sent to chat to keep messages short.
+    public void onRunWaitingForApproval(String runId, String approvalId, String toolName, String argsPreview) {
+        sender.sendMessage(chatId, ChatOpsOutboundMessage.approvalPending(runId, approvalId, toolName, argsPreview));
     }
 
-    /**
-     * Send a custom approval-pending notification.
-     * Called by the approval service or event handler when a new approval is created.
-     */
-    public void notifyApprovalPending(String runId, String approvalId, String toolName, String argsPreview) {
-        sender.sendMessage(chatId, ChatOpsOutboundMessage.approvalPending(runId, approvalId, toolName, argsPreview));
+    @Override
+    public void onUsage(String runId, String sessionId, Usage usage, String model) {
+        // Usage is not sent to chat to keep messages short.
     }
 }

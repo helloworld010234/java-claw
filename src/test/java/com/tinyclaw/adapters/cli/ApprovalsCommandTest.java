@@ -13,6 +13,7 @@ import com.tinyclaw.domain.message.ToolCall;
 import com.tinyclaw.domain.message.ToolDefinition;
 import com.tinyclaw.domain.message.ToolResult;
 import com.tinyclaw.domain.run.AgentRun;
+import com.tinyclaw.domain.run.AgentRunStatus;
 import com.tinyclaw.domain.session.Session;
 import com.tinyclaw.ports.tool.AgentTool;
 import com.tinyclaw.ports.tool.ToolExecutionContext;
@@ -160,8 +161,9 @@ class ApprovalsCommandTest {
     @Test
     void rejectPendingSuccess() {
         seedRunAndApproval("run-reject", "apr-reject", ApprovalStatus.PENDING);
+        runRepository.saveRunWaitingForApproval("run-reject", 3, "apr-reject", BASE);
 
-        RejectApprovalCommand cmd = new RejectApprovalCommand(approvalRepository, FIXED_CLOCK);
+        RejectApprovalCommand cmd = new RejectApprovalCommand(approvalRepository, runRepository, FIXED_CLOCK);
         int exitCode = new CommandLine(cmd).execute(
             "--approval-id", "apr-reject",
             "--reason", "unsafe command"
@@ -174,6 +176,10 @@ class ApprovalsCommandTest {
         ApprovalRequest updated = approvalRepository.findById("apr-reject").orElseThrow();
         assertThat(updated.status()).isEqualTo(ApprovalStatus.REJECTED);
         assertThat(updated.decisionReason()).isEqualTo("unsafe command");
+        var run = runRepository.findById("run-reject").orElseThrow();
+        assertThat(run.status()).isEqualTo(AgentRunStatus.FAILED);
+        assertThat(run.turnCount()).isEqualTo(3);
+        assertThat(run.errorReason()).isEqualTo("Approval rejected: apr-reject");
     }
 
     @Test

@@ -2,9 +2,12 @@ package com.tinyclaw.adapters.cli;
 
 import com.tinyclaw.domain.approval.ApprovalRequest;
 import com.tinyclaw.domain.approval.ApprovalStatus;
+import com.tinyclaw.ports.persistence.AgentRunSummary;
 import com.tinyclaw.ports.persistence.ApprovalRepositoryPort;
+import com.tinyclaw.ports.persistence.RunRepositoryPort;
 import org.springframework.context.annotation.Scope;
 import org.springframework.stereotype.Component;
+import org.springframework.beans.factory.annotation.Autowired;
 import picocli.CommandLine;
 
 import java.time.Clock;
@@ -28,10 +31,19 @@ public class RejectApprovalCommand implements Callable<Integer> {
     private static final DateTimeFormatter FMT = DateTimeFormatter.ISO_INSTANT;
 
     private final ApprovalRepositoryPort approvalRepository;
+    private final RunRepositoryPort runRepository;
     private final Clock clock;
 
     public RejectApprovalCommand(ApprovalRepositoryPort approvalRepository, Clock clock) {
+        this(approvalRepository, null, clock);
+    }
+
+    @Autowired
+    public RejectApprovalCommand(ApprovalRepositoryPort approvalRepository,
+                                 RunRepositoryPort runRepository,
+                                 Clock clock) {
         this.approvalRepository = approvalRepository;
+        this.runRepository = runRepository;
         this.clock = clock;
     }
 
@@ -75,6 +87,14 @@ public class RejectApprovalCommand implements Callable<Integer> {
 
         ApprovalRequest rejected = req.reject(reason.trim(), Instant.now(clock));
         approvalRepository.update(rejected);
+
+        if (runRepository != null) {
+            String safeReason = "Approval rejected: " + approvalId;
+            int turnCount = runRepository.findById(req.runId())
+                .map(AgentRunSummary::turnCount)
+                .orElse(0);
+            runRepository.saveRunFailed(req.runId(), turnCount, safeReason, Instant.now(clock));
+        }
 
         System.out.println("approvalId: " + rejected.id());
         System.out.println("status: " + rejected.status());

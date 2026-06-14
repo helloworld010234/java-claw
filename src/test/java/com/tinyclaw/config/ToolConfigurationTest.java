@@ -3,6 +3,7 @@ package com.tinyclaw.config;
 import com.tinyclaw.application.tool.ToolRegistry;
 import com.tinyclaw.domain.message.ToolCall;
 import com.tinyclaw.domain.message.ToolResult;
+import com.tinyclaw.domain.tool.ToolApprovalRequiredException;
 import com.tinyclaw.ports.tool.ToolExecutionContext;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -15,6 +16,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
 @ActiveProfiles("test")
@@ -81,10 +83,11 @@ class ToolConfigurationTest {
         );
         ToolExecutionContext context = new ToolExecutionContext(workspace);
 
+        // Without run/session context the approval gate denies the call rather than
+        // creating a pending approval request.
         ToolResult result = toolRegistry.execute(call, context);
-
         assertThat(result.error()).isTrue();
-        assertThat(result.output()).contains("Approval gate requires run and session context");
+        assertThat(result.output()).contains("run and session context");
     }
 
     @Test
@@ -98,12 +101,13 @@ class ToolConfigurationTest {
         );
         ToolExecutionContext context = new ToolExecutionContext(workspace, "run-1", "sess-1");
 
-        ToolResult result = toolRegistry.execute(call, context);
-
-        // With run/session context, approval gate creates a PENDING approval request
-        // and returns failure with approval required message
-        assertThat(result.error()).isTrue();
-        assertThat(result.output()).contains("Approval required");
+        assertThatThrownBy(() -> toolRegistry.execute(call, context))
+            .isInstanceOf(ToolApprovalRequiredException.class)
+            .satisfies(ex -> {
+                ToolApprovalRequiredException approvalEx = (ToolApprovalRequiredException) ex;
+                assertThat(approvalEx.approvalId()).isNotBlank();
+                assertThat(approvalEx.toolCall().name()).isEqualTo("edit_file");
+            });
     }
 
     @Test
@@ -115,10 +119,13 @@ class ToolConfigurationTest {
         );
         ToolExecutionContext context = new ToolExecutionContext(workspace, "run-1", "sess-1");
 
-        ToolResult result = toolRegistry.execute(call, context);
-
-        assertThat(result.error()).isTrue();
-        assertThat(result.output()).contains("Approval required");
+        assertThatThrownBy(() -> toolRegistry.execute(call, context))
+            .isInstanceOf(ToolApprovalRequiredException.class)
+            .satisfies(ex -> {
+                ToolApprovalRequiredException approvalEx = (ToolApprovalRequiredException) ex;
+                assertThat(approvalEx.approvalId()).isNotBlank();
+                assertThat(approvalEx.toolCall().name()).isEqualTo("write_file");
+            });
     }
 
     @Test
@@ -130,9 +137,12 @@ class ToolConfigurationTest {
         );
         ToolExecutionContext context = new ToolExecutionContext(workspace, "run-1", "sess-1");
 
-        ToolResult result = toolRegistry.execute(call, context);
-
-        assertThat(result.error()).isTrue();
-        assertThat(result.output()).contains("Approval required");
+        assertThatThrownBy(() -> toolRegistry.execute(call, context))
+            .isInstanceOf(ToolApprovalRequiredException.class)
+            .satisfies(ex -> {
+                ToolApprovalRequiredException approvalEx = (ToolApprovalRequiredException) ex;
+                assertThat(approvalEx.approvalId()).isNotBlank();
+                assertThat(approvalEx.toolCall().name()).isEqualTo("shell_command");
+            });
     }
 }

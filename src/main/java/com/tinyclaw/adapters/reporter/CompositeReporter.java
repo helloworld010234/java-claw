@@ -86,6 +86,17 @@ public class CompositeReporter implements Reporter {
     }
 
     @Override
+    public void onRunWaitingForApproval(String runId, String approvalId, String toolName, String argsPreview) {
+        for (Reporter r : reporters) {
+            try {
+                r.onRunWaitingForApproval(runId, approvalId, toolName, argsPreview);
+            } catch (Exception e) {
+                log.warn("Reporter {} failed on onRunWaitingForApproval: {}", r.getClass().getSimpleName(), e.getMessage());
+            }
+        }
+    }
+
+    @Override
     public void onUsage(String runId, String sessionId, Usage usage, String model) {
         for (Reporter r : reporters) {
             try {

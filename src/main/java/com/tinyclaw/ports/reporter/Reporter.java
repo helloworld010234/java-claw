@@ -24,5 +24,17 @@ public interface Reporter {
 
     void onRunFailed(String runId, String reason);
 
+    /**
+     * Called when a run is paused because a tool call requires human approval.
+     *
+     * @param runId          the run identifier
+     * @param approvalId     the approval request identifier
+     * @param toolName       the tool that was intercepted
+     * @param argsPreview    sanitized preview of the tool arguments
+     */
+    default void onRunWaitingForApproval(String runId, String approvalId, String toolName, String argsPreview) {
+        // no-op by default; reporters that care can override
+    }
+
     void onUsage(String runId, String sessionId, Usage usage, String model);
 }

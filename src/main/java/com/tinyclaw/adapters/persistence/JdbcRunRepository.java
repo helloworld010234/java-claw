@@ -143,6 +143,22 @@ public class JdbcRunRepository implements RunRepositoryPort {
     }
 
     @Override
+    public void saveRunWaitingForApproval(String runId, int turnCount, String approvalId, Instant now) {
+        String sql = """
+            UPDATE agent_runs
+            SET status = ?, current_turn = ?, approval_id = ?, updated_at = ?
+            WHERE id = ?
+            """;
+        jdbcTemplate.update(sql,
+            AgentRunStatus.WAITING_APPROVAL.name().toLowerCase(),
+            turnCount,
+            approvalId,
+            Timestamp.from(now),
+            runId
+        );
+    }
+
+    @Override
     public Optional<AgentRunSummary> findById(String runId) {
         String sql = """
             SELECT id, session_id, mode, status, current_turn, prompt, error_reason, started_at, ended_at

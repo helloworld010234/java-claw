@@ -9,6 +9,7 @@ import com.tinyclaw.domain.message.ToolDefinition;
 import com.tinyclaw.domain.message.ToolResult;
 import com.tinyclaw.domain.message.Usage;
 import com.tinyclaw.domain.run.AgentRun;
+import com.tinyclaw.domain.tool.ToolApprovalRequiredException;
 import com.tinyclaw.domain.session.Session;
 import com.tinyclaw.ports.engine.SubagentRunner;
 import com.tinyclaw.ports.llm.LlmGateway;
@@ -292,232 +293,325 @@ public class AgentEngine implements SubagentRunner {
         try {
             sessionService.appendMessage(session.id(), Message.user(userPrompt));
             reporter.onThinkingStarted(run.id());
-
-            AgentRun currentRun = run;
-            String lastAssistantContent = "";
-            boolean anyToolFailed = false;
-            String toolFailureReason = null;
-            ToolFailureReminder failureReminder = new ToolFailureReminder();
-            Usage totalUsage = null;
-
-            while (currentRun.currentTurn() < currentRun.maxTurns()) {
-                currentRun = currentRun.nextTurn();
-                traceReporter.addAttribute(span, "turn", String.valueOf(currentRun.currentTurn()));
-
-                List<Message> messages = agentContextBuilder.build(
-                    session.workDir(),
-                    sessionService.getWorkingMemory(session.id()),
-                    WORKING_MEMORY_LIMIT
-                );
-
-                // Phase 1: Thinking (optional)
-                String thinkingContent = "";
-                if (enableThinking) {
-                    LlmRequest thinkRequest = new LlmRequest(
-                        modelName,
-                        messages,
-                        List.of(), // no tools during thinking
-                        LlmRequestOptions.defaults()
-                    );
-                    LlmResponse thinkResponse;
-                    try {
-                        thinkResponse = llmGateway.generate(thinkRequest);
-                        if (thinkResponse.usage() != null) {
-                            reporter.onUsage(run.id(), session.id(), thinkResponse.usage(), modelName);
-                            totalUsage = accumulateUsage(totalUsage, thinkResponse.usage());
-                        }
-                    } catch (Exception e) {
-                        String reason = "Thinking phase failed: " + e.getMessage();
-                        currentRun = currentRun.fail(reason, clock.instant());
-                        reporter.onRunFailed(currentRun.id(), reason);
-                        traceReporter.addAttribute(span, "error", reason);
-                        traceReporter.endSpan(span);
-                        return new AgentRunResult(false, lastAssistantContent, currentRun.currentTurn(), reason, totalUsage);
-                    }
-                    thinkingContent = thinkResponse.content();
-                    if (!thinkingContent.isBlank()) {
-                        messages = new ArrayList<>(messages);
-                        messages.add(Message.assistant(thinkingContent));
-                    }
-                }
-
-                // Phase 2: Action
-                List<ToolDefinition> availableTools = toolRegistry.availableTools();
-                LlmRequest actionRequest = new LlmRequest(
-                    modelName,
-                    messages,
-                    availableTools,
-                    LlmRequestOptions.defaults()
-                );
-
-                LlmResponse response;
-                try {
-                    response = llmGateway.generate(actionRequest);
-                    if (response.usage() != null) {
-                        reporter.onUsage(run.id(), session.id(), response.usage(), modelName);
-                        totalUsage = accumulateUsage(totalUsage, response.usage());
-                    }
-                } catch (Exception e) {
-                    String phaseLabel = enableThinking ? "Action phase" : "LLM generation";
-                    String reason = phaseLabel + " failed: " + e.getMessage();
-                    currentRun = currentRun.fail(reason, clock.instant());
-                    reporter.onRunFailed(currentRun.id(), reason);
-                    traceReporter.addAttribute(span, "error", reason);
-                    traceReporter.endSpan(span);
-                    return new AgentRunResult(false, lastAssistantContent, currentRun.currentTurn(), reason, totalUsage);
-                }
-
-                // Merge thinking + action content for the final assistant message
-                String mergedContent;
-                if (thinkingContent.isBlank()) {
-                    mergedContent = response.content();
-                } else {
-                    mergedContent = thinkingContent + "\n" + response.content();
-                }
-                mergedContent = mergedContent.trim();
-                lastAssistantContent = mergedContent;
-
-                Message assistantMsg;
-                if (response.hasToolCalls()) {
-                    assistantMsg = Message.assistantWithToolCalls(mergedContent, response.toolCalls());
-                } else {
-                    assistantMsg = Message.assistant(mergedContent);
-                }
-                sessionService.appendMessage(session.id(), assistantMsg);
-                reporter.onAssistantMessage(currentRun.id(), mergedContent);
-
-                if (!response.hasToolCalls()) {
-                    if (anyToolFailed) {
-                        currentRun = currentRun.fail(toolFailureReason, clock.instant());
-                        AgentRunResult result = new AgentRunResult(false, mergedContent, currentRun.currentTurn(), toolFailureReason, totalUsage);
-                        reporter.onRunFailed(currentRun.id(), toolFailureReason);
-                        traceReporter.addAttribute(span, "error", toolFailureReason);
-                        traceReporter.endSpan(span);
-                        return result;
-                    }
-                    currentRun = currentRun.complete(clock.instant());
-                    AgentRunResult result = new AgentRunResult(true, mergedContent, currentRun.currentTurn(), null, totalUsage);
-                    reporter.onRunCompleted(currentRun.id(), new com.tinyclaw.ports.reporter.RunReportResult(result.success(), result.finalMessage(), result.turnCount(), result.errorReason(), result.totalUsage()));
-                    traceReporter.endSpan(span);
-                    return result;
-                }
-
-                if (response.toolCalls().size() > maxToolCallsPerTurn) {
-                    String reason = "Tool calls per turn exceeded limit: " + response.toolCalls().size() + " > " + maxToolCallsPerTurn;
-                    currentRun = currentRun.fail(reason, clock.instant());
-                    reporter.onRunFailed(currentRun.id(), reason);
-                    traceReporter.addAttribute(span, "error", reason);
-                    traceReporter.endSpan(span);
-                    return new AgentRunResult(false, lastAssistantContent, currentRun.currentTurn(), reason, totalUsage);
-                }
-
-                // Execute tool calls concurrently, preserving order for observations
-                List<ToolCall> toolCalls = response.toolCalls();
-                List<CompletableFuture<ToolExecutionOutcome>> futures = new ArrayList<>(toolCalls.size());
-                for (ToolCall toolCall : toolCalls) {
-                    reporter.onToolCall(currentRun.id(), toolCall);
-                    CompletableFuture<ToolExecutionOutcome> future = CompletableFuture.supplyAsync(() -> {
-                        Instant startedAt = clock.instant();
-                        ToolResult result;
-                        try {
-                            result = toolRegistry.execute(toolCall, toolContext);
-                        } catch (Exception e) {
-                            result = ToolResult.failure(toolCall.id(), "Tool execution failed: " + e.getMessage());
-                        }
-                        Instant completedAt = clock.instant();
-                        return new ToolExecutionOutcome(toolCall, result, startedAt, completedAt);
-                    }, toolExecutor);
-                    futures.add(future);
-                }
-
-                boolean interrupted = false;
-                for (int i = 0; i < toolCalls.size(); i++) {
-                    ToolCall toolCall = toolCalls.get(i);
-                    ToolExecutionOutcome outcome;
-                    try {
-                        outcome = futures.get(i).get();
-                    } catch (InterruptedException e) {
-                        interrupted = true;
-                        // Cancel current and all remaining futures
-                        for (int j = i; j < futures.size(); j++) {
-                            futures.get(j).cancel(true);
-                        }
-                        break;
-                    } catch (ExecutionException e) {
-                        // Cancel remaining futures; convert this tool's exception to failure
-                        for (int j = i + 1; j < futures.size(); j++) {
-                            futures.get(j).cancel(true);
-                        }
-                        Throwable cause = e.getCause() != null ? e.getCause() : e;
-                        outcome = new ToolExecutionOutcome(
-                            toolCall,
-                            ToolResult.failure(toolCall.id(), "Tool execution failed: " + cause.getMessage()),
-                            clock.instant(),
-                            clock.instant()
-                        );
-                    }
-
-                    ToolResult toolResult = outcome.toolResult();
-                    reporter.onToolResult(currentRun.id(), toolResult);
-
-                    traceReporter.recordEvent(span, "tool.execute", Map.of(
-                        "tool.name", toolCall.name(),
-                        "tool.error", String.valueOf(toolResult.error())
-                    ));
-
-                    if (toolExecutionRepository != null) {
-                        ToolExecutionRecord record = new ToolExecutionRecord(
-                            UUID.randomUUID().toString(),
-                            currentRun.id(),
-                            session.id(),
-                            toolCall.id(),
-                            toolCall.name(),
-                            toolCall.argumentsJson(),
-                            toolResult.output(),
-                            toolResult.error(),
-                            outcome.startedAt(),
-                            outcome.completedAt()
-                        );
-                        toolExecutionRepository.append(currentRun.id(), record);
-                    }
-
-                    String observationOutput = toolResult.output();
-                    if (toolResult.error()) {
-                        anyToolFailed = true;
-                        toolFailureReason = "Tool '" + toolCall.name() + "' failed: " + toolResult.output();
-                        observationOutput = recoveryAdvisor.advise(toolCall.name(), observationOutput);
-                    }
-
-                    Message observation = Message.toolObservation(toolCall.id(), observationOutput);
-                    sessionService.appendMessage(session.id(), observation);
-
-                    Optional<Message> reminder = failureReminder.onToolResult(toolCall, toolResult);
-                    reminder.ifPresent(r -> sessionService.appendMessage(session.id(), r));
-                }
-
-                if (interrupted) {
-                    Thread.currentThread().interrupt();
-                    String reason = "Tool execution interrupted";
-                    currentRun = currentRun.fail(reason, clock.instant());
-                    reporter.onRunFailed(currentRun.id(), reason);
-                    traceReporter.addAttribute(span, "error", reason);
-                    traceReporter.endSpan(span);
-                    return new AgentRunResult(false, lastAssistantContent, currentRun.currentTurn(), reason, totalUsage);
-                }
-            }
-
-            String reason = "Max turns (" + run.maxTurns() + ") exceeded without completion";
-            currentRun = currentRun.fail(reason, clock.instant());
-            AgentRunResult result = new AgentRunResult(false, lastAssistantContent, currentRun.currentTurn(), reason, totalUsage);
-            reporter.onRunFailed(currentRun.id(), reason);
-            traceReporter.addAttribute(span, "error", reason);
-            traceReporter.endSpan(span);
-            return result;
+            return executeLoop(run, session, toolContext, toolExecutionRepository, span);
         } catch (Exception e) {
             traceReporter.addAttribute(span, "error", "Unexpected: " + e.getMessage());
             traceReporter.endSpan(span);
             throw e;
         }
+    }
+
+    /**
+     * Resume a run that is paused waiting for approval.
+     *
+     * <p>Assumes the approved tool has already been executed and its observation
+     * appended to the session. This method continues the ReAct loop from the
+     * current turn, calling the LLM for the next action.</p>
+     *
+     * @param run                      the run state machine (must be in WAITING_APPROVAL status)
+     * @param session                  the session for message persistence
+     * @param toolContext              shared tool execution context
+     * @param toolExecutionRepository  optional repository for tool execution audit
+     * @return the run result
+     */
+    public AgentRunResult resume(AgentRun run, Session session, ToolExecutionContext toolContext,
+                                 ToolExecutionRepositoryPort toolExecutionRepository) {
+        DomainGuards.requireNonNull(run, "run");
+        DomainGuards.requireNonNull(session, "session");
+        DomainGuards.requireNonNull(toolContext, "toolContext");
+
+        var span = traceReporter.startSpan("AgentEngine.resume", Map.of(
+            "run.id", run.id(),
+            "session.id", session.id()
+        ));
+
+        try {
+            return executeLoop(run, session, toolContext, toolExecutionRepository, span);
+        } catch (Exception e) {
+            traceReporter.addAttribute(span, "error", "Unexpected: " + e.getMessage());
+            traceReporter.endSpan(span);
+            throw e;
+        }
+    }
+
+    private AgentRunResult executeLoop(AgentRun run,
+                                       Session session,
+                                       ToolExecutionContext toolContext,
+                                       ToolExecutionRepositoryPort toolExecutionRepository,
+                                       com.tinyclaw.ports.observability.TraceReporter.SpanHandle span) {
+        AgentRun currentRun = run;
+        String lastAssistantContent = "";
+        boolean anyToolFailed = false;
+        String toolFailureReason = null;
+        ToolFailureReminder failureReminder = new ToolFailureReminder();
+        Usage totalUsage = null;
+
+        while (currentRun.currentTurn() < currentRun.maxTurns()) {
+            currentRun = currentRun.nextTurn();
+            traceReporter.addAttribute(span, "turn", String.valueOf(currentRun.currentTurn()));
+
+            List<Message> messages = agentContextBuilder.build(
+                session.workDir(),
+                sessionService.getWorkingMemory(session.id()),
+                WORKING_MEMORY_LIMIT
+            );
+
+            // Phase 1: Thinking (optional)
+            String thinkingContent = "";
+            if (enableThinking) {
+                LlmRequest thinkRequest = new LlmRequest(
+                    modelName,
+                    messages,
+                    List.of(), // no tools during thinking
+                    LlmRequestOptions.defaults()
+                );
+                LlmResponse thinkResponse;
+                try {
+                    thinkResponse = llmGateway.generate(thinkRequest);
+                    if (thinkResponse.usage() != null) {
+                        reporter.onUsage(run.id(), session.id(), thinkResponse.usage(), modelName);
+                        totalUsage = accumulateUsage(totalUsage, thinkResponse.usage());
+                    }
+                } catch (Exception e) {
+                    String reason = "Thinking phase failed: " + e.getMessage();
+                    currentRun = currentRun.fail(reason, clock.instant());
+                    reporter.onRunFailed(currentRun.id(), reason);
+                    traceReporter.addAttribute(span, "error", reason);
+                    traceReporter.endSpan(span);
+                    return new AgentRunResult(false, lastAssistantContent, currentRun.currentTurn(), reason, totalUsage);
+                }
+                thinkingContent = thinkResponse.content();
+                if (!thinkingContent.isBlank()) {
+                    messages = new ArrayList<>(messages);
+                    messages.add(Message.assistant(thinkingContent));
+                }
+            }
+
+            // Phase 2: Action
+            List<ToolDefinition> availableTools = toolRegistry.availableTools();
+            LlmRequest actionRequest = new LlmRequest(
+                modelName,
+                messages,
+                availableTools,
+                LlmRequestOptions.defaults()
+            );
+
+            LlmResponse response;
+            try {
+                response = llmGateway.generate(actionRequest);
+                if (response.usage() != null) {
+                    reporter.onUsage(run.id(), session.id(), response.usage(), modelName);
+                    totalUsage = accumulateUsage(totalUsage, response.usage());
+                }
+            } catch (Exception e) {
+                String phaseLabel = enableThinking ? "Action phase" : "LLM generation";
+                String reason = phaseLabel + " failed: " + e.getMessage();
+                currentRun = currentRun.fail(reason, clock.instant());
+                reporter.onRunFailed(currentRun.id(), reason);
+                traceReporter.addAttribute(span, "error", reason);
+                traceReporter.endSpan(span);
+                return new AgentRunResult(false, lastAssistantContent, currentRun.currentTurn(), reason, totalUsage);
+            }
+
+            // Merge thinking + action content for the final assistant message
+            String mergedContent;
+            if (thinkingContent.isBlank()) {
+                mergedContent = response.content();
+            } else {
+                mergedContent = thinkingContent + "\n" + response.content();
+            }
+            mergedContent = mergedContent.trim();
+            lastAssistantContent = mergedContent;
+
+            Message assistantMsg;
+            if (response.hasToolCalls()) {
+                assistantMsg = Message.assistantWithToolCalls(mergedContent, response.toolCalls());
+            } else {
+                assistantMsg = Message.assistant(mergedContent);
+            }
+            sessionService.appendMessage(session.id(), assistantMsg);
+            reporter.onAssistantMessage(currentRun.id(), mergedContent);
+
+            if (!response.hasToolCalls()) {
+                if (anyToolFailed) {
+                    currentRun = currentRun.fail(toolFailureReason, clock.instant());
+                    AgentRunResult result = new AgentRunResult(false, mergedContent, currentRun.currentTurn(), toolFailureReason, totalUsage);
+                    reporter.onRunFailed(currentRun.id(), toolFailureReason);
+                    traceReporter.addAttribute(span, "error", toolFailureReason);
+                    traceReporter.endSpan(span);
+                    return result;
+                }
+                currentRun = currentRun.complete(clock.instant());
+                AgentRunResult result = new AgentRunResult(true, mergedContent, currentRun.currentTurn(), null, totalUsage);
+                reporter.onRunCompleted(currentRun.id(), new com.tinyclaw.ports.reporter.RunReportResult(result.success(), result.finalMessage(), result.turnCount(), result.errorReason(), result.totalUsage()));
+                traceReporter.endSpan(span);
+                return result;
+            }
+
+            if (response.toolCalls().size() > maxToolCallsPerTurn) {
+                String reason = "Tool calls per turn exceeded limit: " + response.toolCalls().size() + " > " + maxToolCallsPerTurn;
+                currentRun = currentRun.fail(reason, clock.instant());
+                reporter.onRunFailed(currentRun.id(), reason);
+                traceReporter.addAttribute(span, "error", reason);
+                traceReporter.endSpan(span);
+                return new AgentRunResult(false, lastAssistantContent, currentRun.currentTurn(), reason, totalUsage);
+            }
+
+            // Execute tool calls concurrently, preserving order for observations
+            List<ToolCall> toolCalls = response.toolCalls();
+            List<CompletableFuture<ToolExecutionOutcome>> futures = new ArrayList<>(toolCalls.size());
+            for (ToolCall toolCall : toolCalls) {
+                reporter.onToolCall(currentRun.id(), toolCall);
+                CompletableFuture<ToolExecutionOutcome> future = CompletableFuture.supplyAsync(() -> {
+                    Instant startedAt = clock.instant();
+                    ToolResult result;
+                    try {
+                        result = toolRegistry.execute(toolCall, toolContext);
+                    } catch (ToolApprovalRequiredException e) {
+                        throw e;
+                    } catch (Exception e) {
+                        result = ToolResult.failure(toolCall.id(), "Tool execution failed: " + e.getMessage());
+                    }
+                    Instant completedAt = clock.instant();
+                    return new ToolExecutionOutcome(toolCall, result, startedAt, completedAt);
+                }, toolExecutor);
+                futures.add(future);
+            }
+
+            boolean interrupted = false;
+            for (int i = 0; i < toolCalls.size(); i++) {
+                ToolCall toolCall = toolCalls.get(i);
+                ToolExecutionOutcome outcome;
+                try {
+                    outcome = futures.get(i).get();
+                } catch (InterruptedException e) {
+                    interrupted = true;
+                    // Cancel current and all remaining futures
+                    for (int j = i; j < futures.size(); j++) {
+                        futures.get(j).cancel(true);
+                    }
+                    break;
+                } catch (ExecutionException e) {
+                    Throwable cause = e.getCause() != null ? e.getCause() : e;
+                    if (cause instanceof ToolApprovalRequiredException approvalEx) {
+                        // Cancel remaining futures; pause the run for approval
+                        for (int j = i; j < futures.size(); j++) {
+                            futures.get(j).cancel(true);
+                        }
+                        currentRun = currentRun.waitForApproval();
+                        appendApprovalAuditRecord(
+                            currentRun,
+                            session,
+                            approvalEx,
+                            toolExecutionRepository
+                        );
+                        reporter.onRunWaitingForApproval(
+                            currentRun.id(),
+                            approvalEx.approvalId(),
+                            approvalEx.toolCall().name(),
+                            approvalEx.argumentsPreview()
+                        );
+                        traceReporter.addAttribute(span, "approval.id", approvalEx.approvalId());
+                        traceReporter.addAttribute(span, "approval.tool", approvalEx.toolCall().name());
+                        traceReporter.endSpan(span);
+                        return AgentRunResult.waitingForApproval(
+                            approvalEx.approvalId(),
+                            approvalEx.toolCall().name(),
+                            currentRun.currentTurn()
+                        );
+                    }
+                    // Cancel remaining futures; convert this tool's exception to failure
+                    for (int j = i + 1; j < futures.size(); j++) {
+                        futures.get(j).cancel(true);
+                    }
+                    outcome = new ToolExecutionOutcome(
+                        toolCall,
+                        ToolResult.failure(toolCall.id(), "Tool execution failed: " + cause.getMessage()),
+                        clock.instant(),
+                        clock.instant()
+                    );
+                }
+
+                ToolResult toolResult = outcome.toolResult();
+                reporter.onToolResult(currentRun.id(), toolResult);
+
+                traceReporter.recordEvent(span, "tool.execute", Map.of(
+                    "tool.name", toolCall.name(),
+                    "tool.error", String.valueOf(toolResult.error())
+                ));
+
+                if (toolExecutionRepository != null) {
+                    ToolExecutionRecord record = new ToolExecutionRecord(
+                        UUID.randomUUID().toString(),
+                        currentRun.id(),
+                        session.id(),
+                        toolCall.id(),
+                        toolCall.name(),
+                        toolCall.argumentsJson(),
+                        toolResult.output(),
+                        toolResult.error(),
+                        outcome.startedAt(),
+                        outcome.completedAt()
+                    );
+                    toolExecutionRepository.append(currentRun.id(), record);
+                }
+
+                String observationOutput = toolResult.output();
+                if (toolResult.error()) {
+                    anyToolFailed = true;
+                    toolFailureReason = "Tool '" + toolCall.name() + "' failed: " + toolResult.output();
+                    observationOutput = recoveryAdvisor.advise(toolCall.name(), observationOutput);
+                }
+
+                Message observation = Message.toolObservation(toolCall.id(), observationOutput);
+                sessionService.appendMessage(session.id(), observation);
+
+                Optional<Message> reminder = failureReminder.onToolResult(toolCall, toolResult);
+                reminder.ifPresent(r -> sessionService.appendMessage(session.id(), r));
+            }
+
+            if (interrupted) {
+                Thread.currentThread().interrupt();
+                String reason = "Tool execution interrupted";
+                currentRun = currentRun.fail(reason, clock.instant());
+                reporter.onRunFailed(currentRun.id(), reason);
+                traceReporter.addAttribute(span, "error", reason);
+                traceReporter.endSpan(span);
+                return new AgentRunResult(false, lastAssistantContent, currentRun.currentTurn(), reason, totalUsage);
+            }
+        }
+
+        String reason = "Max turns (" + run.maxTurns() + ") exceeded without completion";
+        currentRun = currentRun.fail(reason, clock.instant());
+        AgentRunResult result = new AgentRunResult(false, lastAssistantContent, currentRun.currentTurn(), reason, totalUsage);
+        reporter.onRunFailed(currentRun.id(), reason);
+        traceReporter.addAttribute(span, "error", reason);
+        traceReporter.endSpan(span);
+        return result;
+    }
+
+    private void appendApprovalAuditRecord(AgentRun currentRun,
+                                           Session session,
+                                           ToolApprovalRequiredException approvalEx,
+                                           ToolExecutionRepositoryPort toolExecutionRepository) {
+        if (toolExecutionRepository == null) {
+            return;
+        }
+        Instant now = clock.instant();
+        ToolCall toolCall = approvalEx.toolCall();
+        ToolExecutionRecord record = new ToolExecutionRecord(
+            UUID.randomUUID().toString(),
+            currentRun.id(),
+            session.id(),
+            toolCall.id(),
+            toolCall.name(),
+            toolCall.argumentsJson(),
+            approvalEx.getMessage(),
+            true,
+            now,
+            now
+        );
+        toolExecutionRepository.append(currentRun.id(), record);
     }
 
     private Usage accumulateUsage(Usage total, Usage delta) {

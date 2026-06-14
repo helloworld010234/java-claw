@@ -49,6 +49,18 @@ public interface RunRepositoryPort {
     void saveRunFailed(String runId, int turnCount, String reason, Instant completedAt);
 
     /**
+     * Mark a run as waiting for human approval.
+     *
+     * @param runId       the run identifier
+     * @param turnCount   the current turn when the run paused
+     * @param approvalId  the approval request identifier
+     * @param now         the pause timestamp
+     */
+    default void saveRunWaitingForApproval(String runId, int turnCount, String approvalId, Instant now) {
+        // no-op by default; test stubs may override
+    }
+
+    /**
      * Find a run summary by id.
      *
      * @return empty if not found

@@ -2,9 +2,14 @@ package com.tinyclaw.adapters.web;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.tinyclaw.adapters.web.dto.ApprovalActionRequest;
+import com.tinyclaw.application.approval.ApprovalResumeResult;
+import com.tinyclaw.application.approval.ApprovalResumeService;
 import com.tinyclaw.domain.approval.ApprovalRequest;
 import com.tinyclaw.domain.approval.ApprovalStatus;
+import com.tinyclaw.domain.run.AgentRunStatus;
+import com.tinyclaw.ports.persistence.AgentRunSummary;
 import com.tinyclaw.ports.persistence.ApprovalRepositoryPort;
+import com.tinyclaw.ports.persistence.RunRepositoryPort;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
@@ -16,6 +21,8 @@ import org.springframework.test.web.servlet.MockMvc;
 import java.time.Instant;
 import java.util.Optional;
 
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -35,6 +42,12 @@ class ApprovalControllerTest {
     @MockitoBean
     private ApprovalRepositoryPort approvalRepository;
 
+    @MockitoBean
+    private ApprovalResumeService approvalResumeService;
+
+    @MockitoBean
+    private RunRepositoryPort runRepository;
+
     @Test
     void approvePendingApprovalReturnsSuccess() throws Exception {
         ApprovalRequest approval = ApprovalRequest.pending(
@@ -42,6 +55,10 @@ class ApprovalControllerTest {
         );
 
         when(approvalRepository.findById("app-1")).thenReturn(Optional.of(approval));
+        when(approvalResumeService.resume("app-1")).thenReturn(
+            new ApprovalResumeResult("app-1", "run-1", "tc-1", "shell_command",
+                true, false, AgentRunStatus.COMPLETED, "ok", "Done")
+        );
 
         ApprovalActionRequest request = new ApprovalActionRequest("approve", "operator confirmed");
 
@@ -61,6 +78,10 @@ class ApprovalControllerTest {
         );
 
         when(approvalRepository.findById("app-2")).thenReturn(Optional.of(approval));
+        when(runRepository.findById("run-1")).thenReturn(Optional.of(new AgentRunSummary(
+            "run-1", "sess-1", "api", AgentRunStatus.WAITING_APPROVAL, 4,
+            "prompt", "Approval required: app-2", Instant.now(), null
+        )));
 
         ApprovalActionRequest request = new ApprovalActionRequest("reject", "operator rejected");
 
@@ -71,6 +92,9 @@ class ApprovalControllerTest {
             .andExpect(jsonPath("$.approvalId").value("app-2"))
             .andExpect(jsonPath("$.action").value("reject"))
             .andExpect(jsonPath("$.status").value("REJECTED"));
+
+        verify(runRepository).saveRunFailed(
+            eq("run-1"), eq(4), eq("Approval rejected: app-2"), any(Instant.class));
     }
 
     @Test

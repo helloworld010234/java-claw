@@ -13,6 +13,7 @@ import com.tinyclaw.domain.run.AgentRunStatus;
  * @param toolError    true if the underlying tool execution failed
  * @param runStatus    the resulting run status
  * @param output       the tool output on success, or error message on failure
+ * @param finalMessage the final assistant message when the run continued to completion
  */
 public record ApprovalResumeResult(
     String approvalId,
@@ -22,5 +23,18 @@ public record ApprovalResumeResult(
     boolean resumed,
     boolean toolError,
     AgentRunStatus runStatus,
-    String output
-) {}
+    String output,
+    String finalMessage
+) {
+
+    public ApprovalResumeResult(String approvalId,
+                                String runId,
+                                String toolCallId,
+                                String toolName,
+                                boolean resumed,
+                                boolean toolError,
+                                AgentRunStatus runStatus,
+                                String output) {
+        this(approvalId, runId, toolCallId, toolName, resumed, toolError, runStatus, output, "");
+    }
+}
