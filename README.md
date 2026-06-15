@@ -47,6 +47,21 @@ java -jar target/java-claw-0.0.1-SNAPSHOT.jar run \
   --spring.main.web-application-type=none
 ```
 
+## Production LLM Provider
+
+The near-term production path is **OpenAI-compatible via Spring AI** (`spring-ai-starter-model-openai`). `tiny-claw.model.base-url` can point to any OpenAI-compatible endpoint (DeepSeek, OpenAI, Azure OpenAI, local vLLM, etc.).
+
+```bash
+# Example: DeepSeek
+export LLM_BASE_URL=https://api.deepseek.com
+export LLM_API_KEY=your-key
+java -jar target/java-claw-0.0.1-SNAPSHOT.jar \
+  --tiny-claw.model.enabled=true \
+  --tiny-claw.model.name=deepseek-v4-flash
+```
+
+See `docs/adr/0001-production-llm-path-openai-compatible.md` for the decision record and the conditions under which a native Anthropic/Claude adapter would be added.
+
 ## Run Tests
 
 ```bash

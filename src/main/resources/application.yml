@@ -5,8 +5,10 @@ spring:
 tiny-claw:
   model:
     enabled: false
+    # Near-term production path: OpenAI-compatible via Spring AI.
+    # Any provider exposing the OpenAI chat-completions API shape works
+    # (DeepSeek, OpenAI, Azure OpenAI, local vLLM, etc.).
     provider: spring-ai
-    # Target model: deepseek-v4-flash
     name: deepseek-v4-flash
     base-url: ${LLM_BASE_URL:}
     api-key: ${LLM_API_KEY:}

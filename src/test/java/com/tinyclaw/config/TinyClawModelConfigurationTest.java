@@ -178,6 +178,38 @@ class TinyClawModelConfigurationTest {
     }
 
     @Test
+    void unsupportedProviderFailsFast() {
+        new ApplicationContextRunner()
+            .withPropertyValues(
+                "tiny-claw.model.enabled=true",
+                "tiny-claw.model.provider=anthropic",
+                "tiny-claw.model.api-key=sk-test",
+                "tiny-claw.model.name=test-model"
+            )
+            .withConfiguration(AutoConfigurations.of(TinyClawModelConfiguration.class))
+            .withUserConfiguration(MeterRegistryConfig.class)
+            .withBean(ChatModel.class, () -> mock(ChatModel.class))
+            .withBean(TinyClawModelProperties.class, () -> {
+                TinyClawModelProperties p = new TinyClawModelProperties();
+                p.setEnabled(true);
+                p.setProvider("anthropic");
+                p.setApiKey("sk-test");
+                p.setName("test-model");
+                return p;
+            })
+            .run(context -> {
+                assertThat(context).hasFailed();
+                Throwable root = context.getStartupFailure();
+                while (root.getCause() != null) {
+                    root = root.getCause();
+                }
+                assertThat(root)
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("Unsupported tiny-claw.model.provider");
+            });
+    }
+
+    @Test
     void tinyClawModelPropertiesHasDeepSeekV4FlashAsDefault() {
         TinyClawModelProperties properties = new TinyClawModelProperties();
         assertThat(properties.getName()).isEqualTo("deepseek-v4-flash");

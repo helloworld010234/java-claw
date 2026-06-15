@@ -52,6 +52,15 @@ public class TinyClawModelConfiguration {
             TinyClawModelProperties properties,
             MeterRegistry meterRegistry,
             ExecutorService llmCallExecutor) {
+        String provider = properties.getProvider();
+        if (!"spring-ai".equalsIgnoreCase(provider)) {
+            throw new IllegalStateException(
+                "Unsupported tiny-claw.model.provider: '" + provider + "'. "
+                    + "The near-term production path is OpenAI-compatible via Spring AI. "
+                    + "Use provider=spring-ai or see docs/adr/0001-production-llm-path-openai-compatible.md."
+            );
+        }
+
         String apiKey = properties.getApiKey();
         if (apiKey == null || apiKey.isBlank()) {
             LlmGateway failFastGateway = request -> {

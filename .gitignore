@@ -46,3 +46,9 @@ target/
 
 # Smoke test runtime artifacts
 .smoke/
+
+# IDE / local classpath dump
+cp.txt
+
+# JMH benchmark output
+benchmark-results.txt
