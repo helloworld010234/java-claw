@@ -16,5 +16,6 @@ public record AgentRunSummary(
     String prompt,
     String errorReason,
     Instant startedAt,
-    Instant completedAt
+    Instant completedAt,
+    String approvalId
 ) {}

@@ -57,7 +57,7 @@ class ChatOpsApprovalCommandHandlerTest {
         repository.save(pending);
         runRepository.summary = new AgentRunSummary(
             "run-1", "sess-1", "chatops", AgentRunStatus.WAITING_APPROVAL, 3,
-            "prompt", "Approval required: apr-2", clock.instant(), null
+            "prompt", "Approval required: apr-2", clock.instant(), null, "apr-2"
         );
 
         FakeChatOpsMessageSender sender = new FakeChatOpsMessageSender();

@@ -100,7 +100,7 @@ class SecurityIntegrationTest {
     void userKeyAccessesNormalApi() throws Exception {
         AgentRunSummary run = new AgentRunSummary(
             "run-1", "sess-1", "api", AgentRunStatus.RUNNING,
-            1, "test", null, Instant.now(), null
+            1, "test", null, Instant.now(), null, null
         );
         when(runRepository.findById("run-1")).thenReturn(Optional.of(run));
 
@@ -136,7 +136,7 @@ class SecurityIntegrationTest {
     void adminKeyAccessesAllApi() throws Exception {
         AgentRunSummary run = new AgentRunSummary(
             "run-1", "sess-1", "api", AgentRunStatus.RUNNING,
-            1, "test", null, Instant.now(), null
+            1, "test", null, Instant.now(), null, null
         );
         when(runRepository.findById("run-1")).thenReturn(Optional.of(run));
 

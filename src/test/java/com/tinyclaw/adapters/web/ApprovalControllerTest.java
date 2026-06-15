@@ -80,7 +80,7 @@ class ApprovalControllerTest {
         when(approvalRepository.findById("app-2")).thenReturn(Optional.of(approval));
         when(runRepository.findById("run-1")).thenReturn(Optional.of(new AgentRunSummary(
             "run-1", "sess-1", "api", AgentRunStatus.WAITING_APPROVAL, 4,
-            "prompt", "Approval required: app-2", Instant.now(), null
+            "prompt", "Approval required: app-2", Instant.now(), null, "app-2"
         )));
 
         ApprovalActionRequest request = new ApprovalActionRequest("reject", "operator rejected");

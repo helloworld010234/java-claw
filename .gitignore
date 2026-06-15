@@ -43,3 +43,6 @@ target/
 
 # OS
 .DS_Store
+
+# Smoke test runtime artifacts
+.smoke/

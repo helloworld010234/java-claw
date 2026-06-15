@@ -83,6 +83,20 @@ class RunCommandAuditTest {
 
     @BeforeEach
     void setUp() {
+        cleanDatabase();
+        resetForNextRun();
+    }
+
+    private void cleanDatabase() {
+        jdbcTemplate.update("DELETE FROM usage_records");
+        jdbcTemplate.update("DELETE FROM tool_executions");
+        jdbcTemplate.update("DELETE FROM approval_requests");
+        jdbcTemplate.update("DELETE FROM agent_messages");
+        jdbcTemplate.update("DELETE FROM agent_runs");
+        jdbcTemplate.update("DELETE FROM agent_sessions");
+    }
+
+    private void resetForNextRun() {
         ToolRegistry registry = new ToolRegistry(
             List.of(
                 new ReadFileTool(),
@@ -111,6 +125,14 @@ class RunCommandAuditTest {
         err = new ByteArrayOutputStream();
         originalOut = System.out;
         originalErr = System.err;
+        System.setOut(new PrintStream(out));
+        System.setErr(new PrintStream(err));
+    }
+
+    private void resetStreams() {
+        restoreStreams();
+        out = new ByteArrayOutputStream();
+        err = new ByteArrayOutputStream();
         System.setOut(new PrintStream(out));
         System.setErr(new PrintStream(err));
     }
@@ -243,7 +265,7 @@ class RunCommandAuditTest {
         assertThat(run1.turnCount()).isEqualTo(1);
 
         // tool success -> 2 turns
-        setUp();
+        resetStreams();
         commandLine().execute(
             "--prompt", "write something",
             "--dir", tempDir.toString(),
@@ -256,7 +278,7 @@ class RunCommandAuditTest {
         assertThat(run2.turnCount()).isEqualTo(2);
 
         // tool failure -> 2 turns
-        setUp();
+        resetStreams();
         commandLine().execute(
             "--prompt", "read missing",
             "--dir", tempDir.toString(),
@@ -283,7 +305,7 @@ class RunCommandAuditTest {
         String runId1 = extractRunId(out.toString());
         assertThat(exitCode1).isZero();
 
-        setUp();
+        resetStreams();
         int exitCode2 = commandLine().execute(
             "--prompt", "hello two",
             "--dir", tempDir.toString(),
@@ -316,7 +338,7 @@ class RunCommandAuditTest {
         List<AgentMessageDto> messages1 = messageRepository.findByRunId(runId1);
         assertThat(messages1).hasSize(2);
 
-        setUp();
+        resetStreams();
         int exitCode2 = commandLine().execute(
             "--prompt", "hello",
             "--dir", tempDir.toString(),
@@ -586,7 +608,7 @@ class RunCommandAuditTest {
         String runId1 = extractRunId(out.toString());
         assertThat(exitCode1).isZero();
 
-        setUp();
+        resetStreams();
         int exitCode2 = commandLine().execute(
             "--prompt", "hello two",
             "--dir", tempDir.toString(),
@@ -769,7 +791,7 @@ class RunCommandAuditTest {
         assertThat(exitCode1).isZero();
         assertThat(messageRepository.findByRunId(runId1)).hasSize(2);
 
-        setUp();
+        resetStreams();
         int exitCode2 = commandLine().execute(
             "--prompt", "hello again",
             "--dir", tempDir.toString(),

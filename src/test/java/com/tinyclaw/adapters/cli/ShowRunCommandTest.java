@@ -75,7 +75,7 @@ class ShowRunCommandTest {
     void summaryUsesFallbacksWhenOptionalRepositoriesAreAbsent() {
         AgentRunSummary run = new AgentRunSummary(
             "run-1", "sess-1", null, AgentRunStatus.WAITING_APPROVAL, 4,
-            "prompt", null, NOW, null
+            "prompt", null, NOW, null, "app-1"
         );
         ShowRunCommand command = new ShowRunCommand(new StubRunRepository(Optional.of(run)), null, null, null);
 
@@ -96,7 +96,7 @@ class ShowRunCommandTest {
     void detailPrintsMessagesToolExecutionsAndUsageTotals() {
         AgentRunSummary run = new AgentRunSummary(
             "run-2", "sess-2", "cli", AgentRunStatus.FAILED, 2,
-            "prompt", "boom", NOW, NOW
+            "prompt", "boom", NOW, NOW, null
         );
         List<AgentMessageDto> messages = List.of(
             message(Role.SYSTEM, "system note", null, null, 1),
@@ -147,7 +147,7 @@ class ShowRunCommandTest {
     void completedRunPrintsSuccessStatus() {
         AgentRunSummary run = new AgentRunSummary(
             "run-3", "sess-3", "web", AgentRunStatus.COMPLETED, 1,
-            "prompt", null, NOW, NOW
+            "prompt", null, NOW, NOW, null
         );
         ShowRunCommand command = new ShowRunCommand(
             new StubRunRepository(Optional.of(run)),

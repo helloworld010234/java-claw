@@ -13,6 +13,7 @@ public record RunStatusResponse(
     int turnCount,
     String errorReason,
     Instant createdAt,
-    Instant completedAt
+    Instant completedAt,
+    String approvalId
 ) {
 }

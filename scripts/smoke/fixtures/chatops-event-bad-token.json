@@ -1,0 +1,11 @@
+{
+  "token": "wrong-token",
+  "type": "event_callback",
+  "event": {
+    "type": "im.message.receive_v1",
+    "message": {
+      "chat_id": "chat-smoke",
+      "content": "{\"text\":\"hello chatops smoke\"}"
+    }
+  }
+}

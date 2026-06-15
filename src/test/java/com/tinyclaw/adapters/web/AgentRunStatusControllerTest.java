@@ -34,7 +34,8 @@ class AgentRunStatusControllerTest {
             "run-1", "sess-1", "api", AgentRunStatus.COMPLETED,
             3, "test prompt", null,
             Instant.parse("2024-01-01T00:00:00Z"),
-            Instant.parse("2024-01-01T00:01:00Z")
+            Instant.parse("2024-01-01T00:01:00Z"),
+            null
         );
         when(runRepository.findById("run-1")).thenReturn(Optional.of(run));
 
@@ -43,7 +44,8 @@ class AgentRunStatusControllerTest {
             .andExpect(jsonPath("$.runId").value("run-1"))
             .andExpect(jsonPath("$.status").value("COMPLETED"))
             .andExpect(jsonPath("$.turnCount").value(3))
-            .andExpect(jsonPath("$.errorReason").doesNotExist());
+            .andExpect(jsonPath("$.errorReason").doesNotExist())
+            .andExpect(jsonPath("$.approvalId").doesNotExist());
     }
 
     @Test
@@ -52,7 +54,8 @@ class AgentRunStatusControllerTest {
             "run-2", "sess-1", "api", AgentRunStatus.FAILED,
             2, "test prompt", "LLM timeout",
             Instant.parse("2024-01-01T00:00:00Z"),
-            Instant.parse("2024-01-01T00:01:00Z")
+            Instant.parse("2024-01-01T00:01:00Z"),
+            null
         );
         when(runRepository.findById("run-2")).thenReturn(Optional.of(run));
 
@@ -68,5 +71,22 @@ class AgentRunStatusControllerTest {
 
         mockMvc.perform(get("/api/v1/runs/run-999"))
             .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void getWaitingApprovalRunReturnsApprovalId() throws Exception {
+        AgentRunSummary run = new AgentRunSummary(
+            "run-3", "sess-1", "api", AgentRunStatus.WAITING_APPROVAL,
+            2, "approval smoke", null,
+            Instant.parse("2024-01-01T00:00:00Z"),
+            null,
+            "app-smoke-1"
+        );
+        when(runRepository.findById("run-3")).thenReturn(Optional.of(run));
+
+        mockMvc.perform(get("/api/v1/runs/run-3"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.status").value("WAITING_APPROVAL"))
+            .andExpect(jsonPath("$.approvalId").value("app-smoke-1"));
     }
 }

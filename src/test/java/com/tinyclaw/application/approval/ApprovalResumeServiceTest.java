@@ -615,7 +615,8 @@ class ApprovalResumeServiceTest {
             runs.add(new AgentRunSummary(
                 run.id(), run.sessionId(), mode, run.status(),
                 run.currentTurn(), prompt, run.errorReason(),
-                run.startedAt(), run.endedAt()
+                run.startedAt(), run.endedAt(),
+                null
             ));
         }
 
@@ -631,7 +632,8 @@ class ApprovalResumeServiceTest {
             runs.add(new AgentRunSummary(
                 runId, existing.sessionId(), existing.mode(),
                 AgentRunStatus.COMPLETED, turnCount, existing.prompt(),
-                existing.errorReason(), existing.startedAt(), completedAt
+                existing.errorReason(), existing.startedAt(), completedAt,
+                existing.approvalId()
             ));
         }
 
@@ -647,7 +649,8 @@ class ApprovalResumeServiceTest {
             runs.add(new AgentRunSummary(
                 runId, existing.sessionId(), existing.mode(),
                 AgentRunStatus.FAILED, turnCount, existing.prompt(),
-                reason, existing.startedAt(), completedAt
+                reason, existing.startedAt(), completedAt,
+                existing.approvalId()
             ));
         }
 
@@ -663,7 +666,8 @@ class ApprovalResumeServiceTest {
             runs.add(new AgentRunSummary(
                 runId, existing.sessionId(), existing.mode(),
                 AgentRunStatus.WAITING_APPROVAL, turnCount, existing.prompt(),
-                "Approval required: " + approvalId, existing.startedAt(), null
+                "Approval required: " + approvalId, existing.startedAt(), null,
+                approvalId
             ));
         }
     }

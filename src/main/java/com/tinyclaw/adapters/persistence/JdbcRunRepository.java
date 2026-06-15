@@ -161,7 +161,7 @@ public class JdbcRunRepository implements RunRepositoryPort {
     @Override
     public Optional<AgentRunSummary> findById(String runId) {
         String sql = """
-            SELECT id, session_id, mode, status, current_turn, prompt, error_reason, started_at, ended_at
+            SELECT id, session_id, mode, status, current_turn, prompt, error_reason, started_at, ended_at, approval_id
             FROM agent_runs
             WHERE id = ?
             """;
@@ -179,7 +179,8 @@ public class JdbcRunRepository implements RunRepositoryPort {
                     rs.getString("prompt"),
                     rs.getString("error_reason"),
                     rs.getTimestamp("started_at") != null ? rs.getTimestamp("started_at").toInstant() : null,
-                    endedAt != null ? endedAt.toInstant() : null
+                    endedAt != null ? endedAt.toInstant() : null,
+                    rs.getString("approval_id")
                 );
             }, runId);
             return Optional.ofNullable(summary);

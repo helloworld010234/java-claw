@@ -46,7 +46,8 @@ public class AgentRunStatusController {
             run.turnCount(),
             run.errorReason(),
             run.startedAt(),
-            run.completedAt()
+            run.completedAt(),
+            run.approvalId()
         );
         return ResponseEntity.ok(response);
     }

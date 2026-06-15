@@ -122,4 +122,19 @@ class JdbcRunRepositoryTest {
         Optional<AgentRunSummary> found = repository.findById("nonexistent-run");
         assertThat(found).isEmpty();
     }
+
+    @Test
+    void saveRunWaitingForApprovalPersistsApprovalId() {
+        Session session = Session.create("sess-wait", "/tmp/ws", Instant.now());
+        repository.saveSession(session);
+        AgentRun run = AgentRun.start("run-wait", "sess-wait", 5, Instant.now());
+        repository.saveRunStarted(run, "agent", "wait for approval");
+
+        repository.saveRunWaitingForApproval("run-wait", 1, "app-123", Instant.now());
+
+        Optional<AgentRunSummary> found = repository.findById("run-wait");
+        assertThat(found).isPresent();
+        assertThat(found.get().status()).isEqualTo(AgentRunStatus.WAITING_APPROVAL);
+        assertThat(found.get().approvalId()).isEqualTo("app-123");
+    }
 }
