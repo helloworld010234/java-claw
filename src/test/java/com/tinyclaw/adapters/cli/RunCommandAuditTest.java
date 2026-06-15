@@ -29,9 +29,12 @@ import com.tinyclaw.domain.message.Role;
 import com.tinyclaw.domain.run.AgentRunStatus;
 import com.tinyclaw.ports.llm.LlmGateway;
 import com.tinyclaw.ports.llm.LlmResponse;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.api.parallel.ResourceLock;
+import org.junit.jupiter.api.parallel.Resources;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -54,6 +57,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 @SpringBootTest
 @ActiveProfiles("test")
+@ResourceLock(Resources.SYSTEM_OUT)
+@ResourceLock(Resources.SYSTEM_ERR)
 class RunCommandAuditTest {
 
     @TempDir
@@ -85,6 +90,11 @@ class RunCommandAuditTest {
     void setUp() {
         cleanDatabase();
         resetForNextRun();
+    }
+
+    @AfterEach
+    void tearDown() {
+        restoreStreams();
     }
 
     private void cleanDatabase() {
@@ -314,7 +324,9 @@ class RunCommandAuditTest {
         );
         restoreStreams();
         String runId2 = extractRunId(out.toString());
-        assertThat(exitCode2).isZero();
+        assertThat(exitCode2)
+            .as("second run stderr: %s; stdout: %s", err, out)
+            .isZero();
 
         assertThat(runId1).isNotEqualTo(runId2);
         assertThat(runRepository.findById(runId1)).isPresent();
@@ -347,7 +359,9 @@ class RunCommandAuditTest {
         );
         restoreStreams();
         String runId2 = extractRunId(out.toString());
-        assertThat(exitCode2).isZero();
+        assertThat(exitCode2)
+            .as("second same-session same-prompt run stderr: %s; stdout: %s", err, out)
+            .isZero();
 
         List<AgentMessageDto> messages2 = messageRepository.findByRunId(runId2);
         assertThat(messages2).hasSize(2);

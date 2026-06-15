@@ -202,15 +202,19 @@ public class RunCommand implements Callable<Integer> {
 
         Session session;
         if (runRepository != null) {
+            Instant now = Instant.now();
             Optional<Session> existing = runRepository.findSessionById(effectiveSessionId);
-            session = existing.map(stored -> Session.reconstruct(
+            session = existing.map(stored -> {
+                Instant updatedAt = now.isBefore(stored.createdAt()) ? stored.createdAt() : now;
+                return Session.reconstruct(
                     stored.id(),
                     workspace.toAbsolutePath().toString(),
                     stored.status(),
                     stored.createdAt(),
-                    Instant.now()
-                ))
-                .orElseGet(() -> Session.create(effectiveSessionId, workspace.toAbsolutePath().toString(), Instant.now()));
+                    updatedAt
+                );
+            })
+                .orElseGet(() -> Session.create(effectiveSessionId, workspace.toAbsolutePath().toString(), now));
         } else {
             session = Session.create(effectiveSessionId, workspace.toAbsolutePath().toString(), Instant.now());
         }

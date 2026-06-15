@@ -233,22 +233,24 @@ The schema is PostgreSQL-compatible; tests use H2 in PostgreSQL mode.
 - Tests do **not** require a real LLM key; use `FakeLlmGateway` or `@MockBean LlmGateway`.
 - Testcontainers PostgreSQL is available on the test classpath for containerized integration tests when needed.
 
-Latest local verification (`mvn test`):
+Latest local verification (`mvn verify`):
 
 | Metric | Value |
 |---|---|
 | Test classes | 98 |
-| Tests run | 995 |
+| Tests run | 1009 |
 | Failures | 0 |
 | Errors | 0 |
 | Skipped | 13 |
 
 JaCoCo coverage from `target/site/jacoco/index.html`:
 
-| Metric | Value |
-|---|---|
-| Instructions | 90% |
-| Branches | 76% |
+| Metric | Value | Gate |
+|---|---|---|
+| Instructions | 90.03% | ≥ 90% |
+| Branches | 76.93% | ≥ 75% |
+
+The JaCoCo Maven plugin enforces the coverage gate during `mvn verify`. A standalone parser is available at `scripts/ci/check-coverage.ps1`.
 
 ## Code Style Guidelines
 
@@ -278,7 +280,7 @@ JaCoCo coverage from `target/site/jacoco/index.html`:
 - Artifact: `target/java-claw-0.0.1-SNAPSHOT.jar`.
 - Start-Class: `com.tinyclaw.TinyClawApplication`.
 - Main-Class (launcher): `org.springframework.boot.loader.launch.JarLauncher`.
-- No CI/CD files (`.github/workflows`, etc.) currently exist.
+- CI/CD: `.github/workflows/ci.yml` runs the P3 quality gate (Maven verify + coverage + P1 smoke) on push/PR.
 - Deploy by running `java -jar target/java-claw-0.0.1-SNAPSHOT.jar` with the appropriate profile and environment variables.
 
 ## Design Documents
@@ -297,9 +299,11 @@ Additional context lives in `docs/`:
 
 ## Quick Reference for AI Agents
 
-1. Run tests after every meaningful change: `mvn test` or `mvn clean verify`.
-2. Check architecture boundaries: `ArchitectureBoundaryTest` will fail if Spring/adapters/config leaks into `domain`, `ports`, or `application`.
-3. Use `DomainGuards` for argument validation.
-4. Add tests for new public methods; keep coverage high.
-5. Do not require real LLM keys in tests; use `FakeLlmGateway` or `@MockBean LlmGateway`.
-6. Use `--spring.profiles.active=test` and `--engine fake` for safe CLI smoke tests.
+1. Run the full P3 gate after every meaningful change: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\ci\verify.ps1`.
+2. Or run individually: `mvn clean verify`, `scripts\ci\check-coverage.ps1`, `scripts\smoke\p1-e2e-smoke.ps1`, `git diff --check`.
+3. Check architecture boundaries: `ArchitectureBoundaryTest` will fail if Spring/adapters/config leaks into `domain`, `ports`, or `application`.
+4. Use `DomainGuards` for argument validation.
+5. Add tests for new public methods; keep coverage above the JaCoCo thresholds (instruction ≥ 90%, branch ≥ 75%).
+6. Do not require real LLM keys in tests; use `FakeLlmGateway` or `@MockBean LlmGateway`.
+7. Use `--spring.profiles.active=test` and `--engine fake` for safe CLI smoke tests.
+8. Do not commit real secrets; CI uses dummy keys and fails closed if coverage or smoke regresses.

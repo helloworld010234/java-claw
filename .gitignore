@@ -52,3 +52,6 @@ cp.txt
 
 # JMH benchmark output
 benchmark-results.txt
+
+# P1 smoke auto-generated session reports
+notes/session-logs/*-p1-e2e-smoke.md

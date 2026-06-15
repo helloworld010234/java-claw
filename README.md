@@ -62,6 +62,33 @@ java -jar target/java-claw-0.0.1-SNAPSHOT.jar \
 
 See `docs/adr/0001-production-llm-path-openai-compatible.md` for the decision record and the conditions under which a native Anthropic/Claude adapter would be added.
 
+## Quality Gate / CI
+
+The project enforces a P3 quality gate on every push and pull request:
+
+| Gate | Command | Threshold |
+|---|---|---|
+| Build + tests + coverage | `mvn clean verify` | instruction ≥ 90%, branch ≥ 75% |
+| P1 smoke | `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\smoke\p1-e2e-smoke.ps1` | CLI fake, Web run, approval pause/approve/resume, ChatOps webhook |
+| Whitespace | `git diff --check` | no trailing whitespace / conflict markers |
+| Full local gate | `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\ci\verify.ps1` | all of the above |
+
+Coverage is enforced by the JaCoCo Maven plugin during `verify`. A standalone parser is also available at `scripts/ci/check-coverage.ps1`.
+
+The GitHub Actions workflow (`.github/workflows/ci.yml`) runs:
+
+1. `maven-verify` on Ubuntu with JDK 21 — `mvn -B -q clean verify`.
+2. `p1-smoke` on Windows with JDK 21 — the same PowerShell smoke script used locally.
+
+No real LLM key, Feishu key, or outbound Feishu call is required in CI. Dummy values are injected via environment variables; secrets are never logged.
+
+On failure, CI uploads:
+
+- `target/surefire-reports/`
+- `target/site/jacoco/`
+- `.smoke/logs/`
+- `notes/session-logs/`
+
 ## Run Tests
 
 ```bash
