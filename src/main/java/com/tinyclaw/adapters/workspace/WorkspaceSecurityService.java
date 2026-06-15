@@ -6,6 +6,7 @@ import org.springframework.stereotype.Service;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
+import java.util.regex.Pattern;
 
 /**
  * Validates workspace paths requested via the Web API.
@@ -21,6 +22,8 @@ import java.util.List;
  */
 @Service
 public class WorkspaceSecurityService {
+
+    private static final Pattern WINDOWS_DRIVE_QUALIFIED_PATH = Pattern.compile("^[A-Za-z]:.*");
 
     private final Path root;
     private final List<String> allowedIds;
@@ -42,7 +45,7 @@ public class WorkspaceSecurityService {
         String raw = workDir != null && !workDir.isBlank() ? workDir : "default";
 
         Path candidate = Paths.get(raw);
-        if (candidate.isAbsolute()) {
+        if (isAbsoluteOrDriveQualifiedPath(raw, candidate)) {
             throw new IllegalArgumentException("Absolute workspace paths are not allowed: " + raw);
         }
 
@@ -74,5 +77,12 @@ public class WorkspaceSecurityService {
 
     public List<String> allowedIds() {
         return allowedIds;
+    }
+
+    private static boolean isAbsoluteOrDriveQualifiedPath(String raw, Path candidate) {
+        return candidate.isAbsolute()
+            || raw.startsWith("/")
+            || raw.startsWith("\\")
+            || WINDOWS_DRIVE_QUALIFIED_PATH.matcher(raw).matches();
     }
 }

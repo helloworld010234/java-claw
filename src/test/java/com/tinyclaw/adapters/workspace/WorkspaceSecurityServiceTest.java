@@ -3,6 +3,8 @@ package com.tinyclaw.adapters.workspace;
 import com.tinyclaw.config.WorkspaceProperties;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.nio.file.Path;
 import java.util.List;
@@ -63,14 +65,23 @@ class WorkspaceSecurityServiceTest {
         assertThat(resolved).isEqualTo(tempDir.resolve("proj-a/src").toAbsolutePath().normalize());
     }
 
-    @Test
-    void absolutePathIsRejected() {
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "/tmp",
+        "\\tmp",
+        "C:\\tmp",
+        "C:/tmp",
+        "C:tmp",
+        "\\\\server\\share",
+        "//server/share"
+    })
+    void absoluteOrDriveQualifiedPathIsRejected(String workDir) {
         WorkspaceProperties props = new WorkspaceProperties();
         props.setRoot(tempDir.toString());
         props.setAllowedIds(List.of("default"));
         WorkspaceSecurityService service = new WorkspaceSecurityService(props);
 
-        assertThatThrownBy(() -> service.resolveWorkspace("C:\\tmp"))
+        assertThatThrownBy(() -> service.resolveWorkspace(workDir))
             .isInstanceOf(IllegalArgumentException.class)
             .hasMessageContaining("Absolute workspace paths are not allowed");
     }
