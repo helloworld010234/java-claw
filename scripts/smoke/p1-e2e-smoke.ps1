@@ -47,15 +47,28 @@ function Test-Port($port) {
     return $conn -ne $null
 }
 
-function Stop-OnPort($port) {
+function Get-PortOwner($port) {
     $conn = Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue | Where-Object { $_.State -eq "Listen" } | Select-Object -First 1
     if ($conn) {
-        Stop-Process -Id $conn.OwningProcess -Force -ErrorAction SilentlyContinue
-        Write-Log "Stopped process $($conn.OwningProcess) on port $port"
+        return $conn.OwningProcess
+    }
+    return $null
+}
+
+function Assert-PortFree($port) {
+    $owner = Get-PortOwner $port
+    if ($owner -ne $null) {
+        throw "Port $port is already in use by process $owner; refusing to stop unknown process."
     }
 }
 
 function Stop-PidFile($pidFile) {
+    # Only accept pid files inside our own .smoke/pids directory.
+    $expectedDir = (Resolve-Path $pidDir).Path
+    $resolved = if (Test-Path $pidFile) { (Resolve-Path $pidFile).Path } else { $pidFile }
+    if (-not $resolved.StartsWith($expectedDir)) {
+        throw "Refusing to stop pid from outside smoke pid directory: $pidFile"
+    }
     if (Test-Path $pidFile) {
         $pidValue = Get-Content $pidFile -Raw
         if ($pidValue -match '^\d+$') {
@@ -145,11 +158,12 @@ $stubProc = $null
 Write-Log "=== P1 E2E Smoke Start ==="
 
 try {
-    # 1. Pre-cleanup: stop any leftover smoke processes and wipe smoke workspaces
+    # 1. Pre-cleanup: stop only leftover smoke processes recorded by pid files.
+    # If a port is occupied by an unknown process, fail immediately rather than killing it.
     Stop-PidFile $webPidFile
     Stop-PidFile $stubPidFile
-    Stop-OnPort $WebPort
-    Stop-OnPort $StubPort
+    Assert-PortFree $WebPort
+    Assert-PortFree $StubPort
     if (Test-Path $workspaceDir) {
         Remove-Item -Path (Join-Path $workspaceDir "*") -Recurse -Force -ErrorAction SilentlyContinue
     }
@@ -166,17 +180,21 @@ try {
     # 3. Start OpenAI stub
     Write-Log "Starting OpenAI stub on port $StubPort..."
     $stubErrLog = Join-Path $logsDir "openai-stub.err.log"
+    $stubOutLog = Join-Path $logsDir "openai-stub.stdout.log"
     $stubProc = Start-Process -FilePath "powershell" -ArgumentList @(
         "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
         (Join-Path $workspace "scripts/smoke/openai-stub.ps1"),
-        "-Port", $StubPort
-    ) -RedirectStandardOutput $stubLog -RedirectStandardError $stubErrLog -PassThru -WindowStyle Hidden
+        "-Port", $StubPort,
+        "-WorkspaceRoot", $workspace
+    ) -RedirectStandardOutput $stubOutLog -RedirectStandardError $stubErrLog -PassThru -WindowStyle Hidden
     $stubProc.Id | Out-File $stubPidFile -Encoding utf8 -NoNewline
     Write-Log "Stub PID: $($stubProc.Id)"
 
     if (-not (Wait-Health "http://127.0.0.1:$StubPort/" -timeoutSec 15)) {
         throw "Stub did not start"
     }
+    # Do NOT use Get-PortOwner for the stub: HttpListener on Windows uses HTTP.sys,
+    # so the port appears to be owned by PID 4 (System). The pid file keeps $stubProc.Id.
 
     # 4. Start Web server
     Write-Log "Starting Web server on port $WebPort..."
@@ -201,6 +219,13 @@ try {
 
     if (-not (Wait-Health "http://127.0.0.1:$WebPort/actuator/health" -timeoutSec 60)) {
         throw "Web server did not start"
+    }
+    # Spring Boot executable jar may spawn a separate JVM listener process.
+    # Record the actual listener PID so cleanup stops the real server, not just a launcher.
+    # Reject PID 0/4 because those are kernel/system PIDs, not our JVM.
+    $webListenerPid = Get-PortOwner $WebPort
+    if ($webListenerPid -ne $null -and $webListenerPid -gt 4) {
+        $webListenerPid | Out-File $webPidFile -Encoding utf8 -NoNewline
     }
 
     # 5. CLI fake run
@@ -366,8 +391,6 @@ try {
     }
     Stop-PidFile $webPidFile
     Stop-PidFile $stubPidFile
-    Stop-OnPort $WebPort
-    Stop-OnPort $StubPort
 }
 
 # 10. Generate report using structured lines to avoid here-string encoding issues

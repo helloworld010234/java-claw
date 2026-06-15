@@ -3,13 +3,18 @@
 # Returns responses based on the content of the request messages, not a global call counter,
 # so health checks or extra ChatOps calls do not break the smoke sequence.
 param(
-    [int]$Port = 18081
+    [int]$Port = 18081,
+    [string]$WorkspaceRoot = ""
 )
 
 $ErrorActionPreference = "Stop"
 
-$workspace = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
-$smokeDir = Join-Path $workspace ".smoke"
+if ($WorkspaceRoot -eq "") {
+    # scripts/smoke/openai-stub.ps1 -> scripts/smoke -> scripts -> repo root
+    $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+    $WorkspaceRoot = Split-Path -Parent (Split-Path -Parent $scriptDir)
+}
+$smokeDir = Join-Path $WorkspaceRoot ".smoke"
 $logsDir = Join-Path $smokeDir "logs"
 $logPath = Join-Path $logsDir "openai-stub.log"
 
